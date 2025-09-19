@@ -1,4 +1,3 @@
-// api/debug-form.js
 const multiparty = require("multiparty");
 
 module.exports = (req, res) => {
@@ -16,7 +15,6 @@ module.exports = (req, res) => {
       weekReceived: week,
       fileMeta: file
         ? {
-            fieldName: file.fieldName,
             originalFilename: file.originalFilename,
             sizeBytes: file.size,
             contentType: file.headers?.["content-type"]

@@ -4,8 +4,8 @@
     { "src": "api/**/*.js", "use": "@vercel/node" }
   ],
   "routes": [
-    { "src": "^/$", "dest": "/index.html" },            // serve the public page at root
-    { "src": "/api$", "dest": "/api/index.js" },        // optional if you have api/index.js
-    { "src": "/api/(.*)$", "dest": "/api/$1.js" }
+    { "src": "^/$", "dest": "/index.html" },
+    { "src": "^/api$", "dest": "/api/index.js" },
+    { "src": "^/api/(.*)$", "dest": "/api/$1.js" }
   ]
 }

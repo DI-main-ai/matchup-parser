@@ -3,6 +3,7 @@ import Busboy from "busboy";
 
 const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
+// ---------- helpers ----------
 function readMultipart(req) {
   return new Promise((resolve, reject) => {
     const bb = Busboy({ headers: req.headers });
@@ -18,11 +19,9 @@ function readMultipart(req) {
       if (!chunks.length) return reject(new Error("No file uploaded"));
       resolve({ buffer: Buffer.concat(chunks), mime });
     });
-
     req.pipe(bb);
   });
 }
-
 async function readJson(req) {
   const bodyStr = typeof req.body === "string" ? req.body : JSON.stringify(req.body || {});
   const body = bodyStr ? JSON.parse(bodyStr) : {};
@@ -34,17 +33,15 @@ async function readJson(req) {
   const buffer = Buffer.from(m[2], "base64");
   return { buffer, mime };
 }
-
 async function readImage(req) {
   const ct = (req.headers["content-type"] || "").toLowerCase();
   if (ct.startsWith("multipart/form-data")) return readMultipart(req);
-  if (ct.includes("application/json")) return readJson(req);
+  if (ct.includes("application/json"))    return readJson(req);
   throw new Error('Send as multipart/form-data with field "file", or JSON with { dataUrl }');
 }
-
 function safeParseJson(text) {
   const start = text.indexOf("{");
-  const end = text.lastIndexOf("}");
+  const end   = text.lastIndexOf("}");
   if (start === -1 || end === -1 || end <= start) throw new Error("No JSON returned by model");
   return JSON.parse(text.slice(start, end + 1));
 }
@@ -55,22 +52,40 @@ Return ONLY:
 Use the large bold numbers as final scores; ignore projections. Team names are the blue names. Keep capitalization and apostrophes. No extra text.
 `;
 
+// ---------- handler ----------
 export default async function handler(req, res) {
   try {
+    // Simple HTML form for GET (so you can test in the browser)
+    if (req.method === "GET") {
+      res.setHeader("Content-Type", "text/html; charset=utf-8");
+      return res.status(200).send(`
+        <html><body style="font-family:system-ui;padding:20px">
+          <h2>/api/parse-matchups</h2>
+          <p>Choose an image and click Upload to parse.</p>
+          <form method="POST" enctype="multipart/form-data">
+            <input type="file" name="file" accept="image/*"/>
+            <button type="submit">Upload</button>
+          </form>
+          <p style="margin-top:10px">Need raw JSON? POST <code>{ dataUrl }</code> to this endpoint.</p>
+        </body></html>
+      `);
+    }
+
+    // CORS preflight (optional)
     if (req.method === "OPTIONS") {
       res.setHeader("Access-Control-Allow-Origin", "*");
-      res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+      res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS, GET");
       res.setHeader("Access-Control-Allow-Headers", "Content-Type");
       return res.status(204).end();
     }
 
     if (req.method !== "POST") {
-      res.setHeader("Allow", "POST, OPTIONS");
-      return res.status(405).json({ error: "POST only" });
+      res.setHeader("Allow", "GET, POST, OPTIONS");
+      return res.status(405).json({ error: "Use GET (form) or POST (image) only" });
     }
 
     if (!process.env.OPENAI_API_KEY) {
-      return res.status(500).json({ error: "OPENAI_API_KEY not set" });
+      return res.status(500).json({ error: "OPENAI_API_KEY not set on server" });
     }
 
     const { buffer, mime } = await readImage(req);

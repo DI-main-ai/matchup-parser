@@ -112,13 +112,19 @@ export default async function handler(req, res) {
     const parsed = safeParseJson(raw);
     const matchups = Array.isArray(parsed.matchups) ? parsed.matchups : [];
 
+    function twoDec(n) {
+      // keep two decimals as a Number (not a string)
+      return Number(parseFloat(String(n)).toFixed(2));
+    }
+
     const enriched = matchups.map(m => {
-      const homeScore = Number(m.homeScore);
-      const awayScore = Number(m.awayScore);
+      const homeScore = twoDec(m.homeScore);
+      const awayScore = twoDec(m.awayScore);
       const winner = homeScore >= awayScore ? m.homeTeam : m.awayTeam;
-      const diff = Math.abs(homeScore - awayScore);
+      const diff = twoDec(Math.abs(homeScore - awayScore));
       return { ...m, homeScore, awayScore, winner, diff };
     });
+
 
     res.setHeader("Access-Control-Allow-Origin", "*");
     return res.status(200).json({ matchups: enriched });

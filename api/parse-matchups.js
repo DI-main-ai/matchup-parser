@@ -23,6 +23,12 @@ function extractJsonBlock(s) {
 
 async function callOpenAI(b64, mime) {
   const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+  // Quick feature test – if this throws, your openai package is too old.
+  if (!client.responses || !client.responses.create) {
+    throw new Error("OpenAI SDK version doesn’t support responses.create – update 'openai' to ^4.58.0");
+  }
+
   const prompt = `
 Return STRICT JSON ONLY:
 
@@ -68,11 +74,12 @@ Rules:
   let data;
   try {
     data = JSON.parse(json);
-  } catch (e) {
+  } catch {
     throw new Error("Model did not return valid JSON");
   }
 
   if (!Array.isArray(data.matchups)) data.matchups = [];
+
   for (const m of data.matchups) {
     m.homeScore = Number(m.homeScore);
     m.awayScore = Number(m.awayScore);
@@ -110,7 +117,6 @@ module.exports = async (req, res) => {
     if (!file) return res.status(400).json({ error: 'No file uploaded (field "file")' });
 
     const { b64, mime } = readFileB64(file);
-
     const ai = await callOpenAI(b64, mime);
 
     return res.status(200).json({

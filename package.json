@@ -1,12 +1,9 @@
 {
   "name": "matchup-parser",
   "version": "1.0.0",
-  "scripts": {
-    "dev": "vercel dev",
-    "start": "node api/parse-matchups.js"
-  },
+  "type": "module",
   "dependencies": {
-    "openai": "^4.0.0",
+    "openai": "^4.55.0",
     "busboy": "^1.6.0"
   }
 }

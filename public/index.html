@@ -120,6 +120,39 @@
     enableActions(true);
   }
 
+  document.getElementById('btnUpload').addEventListener('click', async () => {
+    const fileInput = document.getElementById('file');
+    const weekInput = document.getElementById('weekInput').value; // get week number
+  
+    if (!fileInput.files.length) {
+      alert('Please select a screenshot.');
+      return;
+    }
+  
+    const formData = new FormData();
+    formData.append('file', fileInput.files[0]);
+  
+    if (weekInput) {
+      formData.append('week', weekInput); // send it along
+    }
+  
+    document.getElementById('status').textContent = 'Uploading & parsing...';
+  
+    try {
+      const res = await fetch('/api/parse-matchups', {
+        method: 'POST',
+        body: formData
+      });
+  
+      const data = await res.json();
+      document.getElementById('status').textContent = 'Done';
+      document.getElementById('output').textContent = JSON.stringify(data, null, 2);
+    } catch (err) {
+      document.getElementById('status').textContent = 'Error: ' + err.message;
+    }
+  });
+
+  
   // Click to select
   drop.addEventListener('click', () => inpFile.click());
   inpFile.addEventListener('change', (e) => loadFile(e.target.files[0]));

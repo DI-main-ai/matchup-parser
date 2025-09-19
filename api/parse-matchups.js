@@ -1,156 +1,162 @@
-import OpenAI from "openai";
-import Busboy from "busboy";
+// api/parse-matchups.js
+const fs = require("fs");
+const path = require("path");
+const multiparty = require("multiparty");
+const OpenAI = require("openai");
 
-const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const client = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY
+});
 
-function readMultipart(req) {
+// ---- helpers ---------------------------------------------------------------
+
+function parseForm(req) {
   return new Promise((resolve, reject) => {
-    const bb = Busboy({ headers: req.headers });
-    const chunks = [];
-    let mime = "image/png";
-    bb.on("file", (_name, file, info) => {
-      if (info && info.mimeType) mime = info.mimeType;
-      file.on("data", d => chunks.push(d));
+    const form = new multiparty.Form();
+    form.parse(req, (err, fields, files) => {
+      if (err) return reject(err);
+      resolve({ fields, files });
     });
-    bb.on("error", reject);
-    bb.on("finish", () => {
-      if (!chunks.length) return reject(new Error("No file uploaded"));
-      resolve({ buffer: Buffer.concat(chunks), mime });
-    });
-    req.pipe(bb);
   });
 }
-async function readJson(req) {
-  const bodyStr = typeof req.body === "string" ? req.body : JSON.stringify(req.body || {});
-  const body = bodyStr ? JSON.parse(bodyStr) : {};
-  const dataUrl = body.dataUrl;
-  if (!dataUrl) throw new Error('JSON body must include "dataUrl" (data:<mime>;base64,...)');
-  const m = /^data:(.+);base64,(.+)$/i.exec(dataUrl);
-  if (!m) throw new Error("Invalid dataUrl format");
-  const mime = m[1];
-  const buffer = Buffer.from(m[2], "base64");
-  return { buffer, mime };
+
+function fileToBase64(file) {
+  const buf = fs.readFileSync(file.path);
+  // best guess; the site screenshots are usually png
+  const ext = (file.headers?.["content-type"] || "").includes("jpeg")
+    ? "jpeg"
+    : "png";
+  return { b64: buf.toString("base64"), mime: `image/${ext}` };
 }
-async function readImage(req) {
-  const ct = (req.headers["content-type"] || "").toLowerCase();
-  if (ct.startsWith("multipart/form-data")) return readMultipart(req);
-  if (ct.includes("application/json"))    return readJson(req);
-  throw new Error('Send as multipart/form-data with field "file", or JSON with { dataUrl }');
+
+// Some models sometimes wrap JSON with prose. This pulls the first JSON block.
+function extractJson(text) {
+  const m = text.match(/\{[\s\S]*\}$/m) || text.match(/\{[\s\S]*\}/m);
+  return m ? m[0] : text;
 }
-function safeParseJson(text) {
-  const start = text.indexOf("{");
-  const end   = text.lastIndexOf("}");
-  if (start === -1 || end === -1 || end <= start) throw new Error("No JSON returned by model");
-  return JSON.parse(text.slice(start, end + 1));
-}
-const SYSTEM_PROMPT = `
-You will output ONLY strict JSON with this shape:
+
+// ---- core: call model ------------------------------------------------------
+
+async function parseImageWithModel(imageBase64, mime) {
+  const prompt = `
+You are an OCR + parser for fantasy-football matchup screenshots.
+Return STRICT JSON only (no code block, no prose) with this shape:
+
 {
+  "week": number | null,               // if "Week N" appears, return N, else null
   "matchups": [
-    { "homeTeam": string, "homeScore": number, "awayTeam": string, "awayScore": number }
+    {
+      "homeTeam": string,
+      "homeScore": number,
+      "awayTeam": string,
+      "awayScore": number,
+      "winner": string,
+      "diff": number
+    }
   ]
 }
 
 Rules:
-- Read the LARGE bold numbers as the final scores (ignore smaller numbers/projections).
-- Team names are the BLUE names; strip records/ranks like "1-1-0 | 6th".
-- Preserve capitalization and apostrophes in names.
-- **Scores must include EXACTLY two decimal places (e.g., 120.18). Do not round to integers. Do not change punctuation.**
-- If a character is ambiguous (I vs |), choose the letter that forms a real name.
-- Return ONLY the JSON object, no extra text.
+- Scores must be the MAIN bold scores (not projections or small numbers).
+- Team names are the blue names exactly as printed (preserve apostrophes).
+- diff = |homeScore - awayScore| (round to 2 decimals).
+- If a name is unclear, make your best guess but do NOT invent teams not in the image.
+- If "Week N Matchups" (or similar) is present, set "week" = N, else null.
 `;
 
-export default async function handler(req, res) {
-  if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed' });
-  }
-
-  const form = new multiparty.Form();
-  form.parse(req, async (err, fields, files) => {
-    if (err) return res.status(500).json({ error: 'File upload failed' });
-
-    const week = fields.week ? fields.week[0] : null;
-
-    // OCR + parsing logic here...
-    const result = await parseScreenshot(files.file[0].path);
-
-    res.status(200).json({
-      week: week || result.week || null, // prefer manual, fallback to OCR
-      matchups: result.matchups
-    });
-  });
-}
-
-
-export default async function handler(req, res) {
-  try {
-    if (req.method === "GET") {
-      res.setHeader("Content-Type", "text/html; charset=utf-8");
-      return res.status(200).send(`
-        <html><body style="font-family:system-ui;padding:20px">
-          <h2>/api/parse-matchups</h2>
-          <form method="POST" enctype="multipart/form-data">
-            <input type="file" name="file" accept="image/*"/>
-            <button type="submit">Upload</button>
-          </form>
-        </body></html>
-      `);
-    }
-    if (req.method === "OPTIONS") {
-      res.setHeader("Access-Control-Allow-Origin", "*");
-      res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-      res.setHeader("Access-Control-Allow-Headers", "Content-Type");
-      return res.status(204).end();
-    }
-    if (req.method !== "POST") {
-      res.setHeader("Allow", "GET, POST, OPTIONS");
-      return res.status(405).json({ error: "Use GET (form) or POST (image) only" });
-    }
-    if (!process.env.OPENAI_API_KEY) {
-      return res.status(500).json({ error: "OPENAI_API_KEY not set on server" });
-    }
-
-    const { buffer, mime } = await readImage(req);
-    const b64 = buffer.toString("base64");
-
-    const completion = await client.chat.completions.create({
-  model: "gpt-4o-mini",
-  temperature: 0,
-  response_format: { type: "json_object" },   // ← add this
-  messages: [
-    { role: "system", content: SYSTEM_PROMPT },
+  const input = [
     {
       role: "user",
       content: [
-        { type: "text", text: "Extract final results as strict JSON." },
-        { type: "image_url", image_url: { url: `data:${mime};base64,${b64}` } }
+        { type: "input_text", text: prompt },
+        { type: "input_image", image_url: `data:${mime};base64,${imageBase64}` }
       ]
     }
-  ]
-});
-    
-    const raw = completion.choices?.[0]?.message?.content || "";
-    const parsed = safeParseJson(raw);
-    const matchups = Array.isArray(parsed.matchups) ? parsed.matchups : [];
+  ];
 
-    function twoDec(n) {
-      // keep two decimals as a Number (not a string)
-      return Number(parseFloat(String(n)).toFixed(2));
+  const resp = await client.responses.create({
+    model: process.env.OPENAI_MODEL || "gpt-5-mini",
+    temperature: 0.1,
+    input
+  });
+
+  const text = resp.output_text;
+  const json = extractJson(text);
+  let data;
+  try {
+    data = JSON.parse(json);
+  } catch (e) {
+    // Fall back: try to be defensive if model returned something slightly wrapped
+    throw new Error("Parser: model did not return valid JSON");
+  }
+
+  // sanitize numeric fields
+  if (Array.isArray(data.matchups)) {
+    for (const m of data.matchups) {
+      m.homeScore = Number(m.homeScore);
+      m.awayScore = Number(m.awayScore);
+      if (!Number.isFinite(m.homeScore) || !Number.isFinite(m.awayScore)) {
+        throw new Error("Parser: non-numeric score in result");
+      }
+      const diff = Math.abs(m.homeScore - m.awayScore);
+      m.diff = Number(diff.toFixed(2));
+      // winner sanity (recompute if missing)
+      if (!m.winner) {
+        m.winner = m.homeScore >= m.awayScore ? m.homeTeam : m.awayTeam;
+      }
+    }
+  } else {
+    data.matchups = [];
+  }
+
+  data.week = data.week == null ? null : Number(data.week);
+  if (data.week != null && !Number.isFinite(data.week)) data.week = null;
+
+  return data;
+}
+
+// ---- handler ---------------------------------------------------------------
+
+module.exports = async (req, res) => {
+  if (req.method !== "POST") {
+    res.status(405).json({ error: "Method not allowed" });
+    return;
+  }
+
+  try {
+    const { fields, files } = await parseForm(req);
+
+    const weekField =
+      fields?.week && Array.isArray(fields.week) ? fields.week[0] : null;
+    const manualWeek =
+      weekField != null && String(weekField).trim() !== ""
+        ? Number(weekField)
+        : null;
+
+    const file =
+      files?.file && Array.isArray(files.file) ? files.file[0] : null;
+
+    if (!file) {
+      res.status(400).json({ error: 'No file uploaded (form field name must be "file")' });
+      return;
     }
 
-    const enriched = matchups.map(m => {
-      const homeScore = twoDec(m.homeScore);
-      const awayScore = twoDec(m.awayScore);
-      const winner = homeScore >= awayScore ? m.homeTeam : m.awayTeam;
-      const diff = twoDec(Math.abs(homeScore - awayScore));
-      return { ...m, homeScore, awayScore, winner, diff };
-    });
+    const { b64, mime } = fileToBase64(file);
+    const ai = await parseImageWithModel(b64, mime);
 
+    const out = {
+      week: manualWeek ?? ai.week ?? null,
+      matchups: ai.matchups || []
+    };
 
-    res.setHeader("Access-Control-Allow-Origin", "*");
-    return res.status(200).json({ matchups: enriched });
-  } catch (e) {
-    const msg = e?.message || String(e);
-    return res.status(400).json({ error: msg });
+    res.status(200).json(out);
+  } catch (err) {
+    // Show a helpful error in the UI
+    res
+      .status(500)
+      .json({
+        error: String(err?.message || err || "Server error"),
+        code: "FUNCTION_INVOCATION_FAILED"
+      });
   }
-}
+};

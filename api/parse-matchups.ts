@@ -1,94 +1,150 @@
-// Vercel serverless function
-import type { VercelRequest, VercelResponse } from 'vercel';
+// api/parse-matchups.ts
+import type { VercelRequest, VercelResponse } from '@vercel/node';
 import OpenAI from 'openai';
+import Busboy from 'busboy';
 
-// IMPORTANT: set OPENAI_API_KEY in Vercel env
-const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
+// ---------- OpenAI client ----------
+const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-// Helper: read multipart/form-data
-async function readImageFromRequest(req: VercelRequest): Promise<{buffer:Buffer, mime:string, week?:string}> {
-  const contentType = req.headers['content-type'] || '';
-  if (!contentType.startsWith('multipart/form-data')) {
-    throw new Error('Send as multipart/form-data with field "file"');
-  }
-  const busboy = await import('busboy').then(m => m.default({ headers: req.headers as any }));
-  const chunks: Buffer[] = [];
-  let mime = 'image/png';
-  let week: string | undefined;
+// ---------- Helpers: request parsing ----------
+type ImgPayload = { buffer: Buffer; mime: string; week?: string; };
 
-  await new Promise<void>((resolve, reject) => {
-    req.pipe(busboy);
-    busboy.on('file', (_fieldname, file, info) => {
-      mime = info.mimeType || mime;
-      file.on('data', (d:Buffer) => chunks.push(d));
-      file.on('end', () => {});
+async function readMultipart(req: VercelRequest): Promise<ImgPayload> {
+  return new Promise((resolve, reject) => {
+    const bb = Busboy({ headers: req.headers as any });
+    const chunks: Buffer[] = [];
+    let mime = 'image/png';
+    let week: string | undefined;
+
+    bb.on('file', (_name, file, info) => {
+      if (info && (info as any).mimeType) mime = (info as any).mimeType;
+      file.on('data', (d: Buffer) => chunks.push(d));
     });
-    busboy.on('field', (name, val) => {
+    bb.on('field', (name, val) => {
       if (name === 'week') week = val;
     });
-    busboy.on('error', reject);
-    busboy.on('finish', () => resolve());
-  });
+    bb.on('error', reject);
+    bb.on('finish', () => {
+      if (!chunks.length) return reject(new Error('No file provided'));
+      resolve({ buffer: Buffer.concat(chunks), mime, week });
+    });
 
-  if (!chunks.length) throw new Error('No file provided');
-  return { buffer: Buffer.concat(chunks), mime, week };
+    // @ts-ignore
+    req.pipe(bb);
+  });
 }
 
+async function readJson(req: VercelRequest): Promise<ImgPayload> {
+  // Body may already be parsed by Vercel, or be a string
+  const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : (req.body || {});
+  const dataUrl: string = body.dataUrl;
+  const week: string | undefined = body.week;
+
+  if (!dataUrl || typeof dataUrl !== 'string') {
+    throw new Error('JSON body must include "dataUrl" (data:<mime>;base64,...)');
+  }
+  const m = /^data:(.+);base64,(.+)$/i.exec(dataUrl);
+  if (!m) throw new Error('Invalid dataUrl format');
+  const mime = m[1];
+  const b64 = m[2];
+  const buffer = Buffer.from(b64, 'base64');
+  return { buffer, mime, week };
+}
+
+async function readImageFromRequest(req: VercelRequest): Promise<ImgPayload> {
+  const ct = (req.headers['content-type'] || '').toString().toLowerCase();
+  if (ct.startsWith('multipart/form-data')) return readMultipart(req);
+  if (ct.includes('application/json')) return readJson(req);
+  throw new Error('Send as multipart/form-data (field "file") or JSON with { dataUrl }');
+}
+
+// ---------- Vision prompt ----------
 const SYSTEM_PROMPT = `
 You convert fantasy football matchup screenshots into strict JSON.
-Return ONLY valid JSON. No commentary.
+Return ONLY valid JSON.
 
-Extract an array "matchups" where each item is:
-{ "homeTeam": string, "homeScore": number, "awayTeam": string, "awayScore": number }
+Output shape:
+{
+  "matchups": [
+    { "homeTeam": string, "homeScore": number, "awayTeam": string, "awayScore": number }
+  ]
+}
 
 Rules:
-- Use the LARGE bold numbers as final scores (ignore smaller projections beneath).
-- Team names are the BLUE team names (ignore records/rank like "1-1-0 | 6th").
-- Preserve apostrophes and capitalization.
-- Do not include emoji or icons.
-- If a team name begins with "I", keep the "I" even if it looks like a pipe.
-- If you are unsure about a character, prefer letters over punctuation.
-- Output must be strict JSON: { "matchups": [...] }`;
+- Use the LARGE bold numbers as final scores; ignore smaller projections beneath.
+- Team names are the BLUE names; remove records/ranks like "1-1-0 | 6th".
+- Preserve capitalization and apostrophes (e.g., "Kyle's Hustle").
+- If a character is ambiguous (I vs |), prefer the letter that makes a real name.
+- Do not include emoji, icons, or extra fields.
+`;
 
+// ---------- Util: safe JSON extraction ----------
+function safeParseJson(text: string): any {
+  const start = text.indexOf('{');
+  const end = text.lastIndexOf('}');
+  if (start === -1 || end === -1 || end <= start) throw new Error('No JSON in model response');
+  return JSON.parse(text.slice(start, end + 1));
+}
+
+// ---------- Handler ----------
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
-    if (req.method !== 'POST') return res.status(405).json({ error: 'POST only' });
-    const { buffer, mime } = await readImageFromRequest(req);
+    // CORS / preflight
+    if (req.method === 'OPTIONS') {
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+      return res.status(204).end();
+    }
 
+    if (req.method !== 'POST') {
+      res.setHeader('Allow', 'POST, OPTIONS');
+      return res.status(405).json({ error: 'POST only' });
+    }
+
+    if (!process.env.OPENAI_API_KEY) {
+      return res.status(500).json({ error: 'OPENAI_API_KEY is not set on the server' });
+    }
+
+    const { buffer, mime } = await readImageFromRequest(req);
     const b64 = buffer.toString('base64');
 
-    // Vision LLM call (uses an image alongside the instructions)
+    // ----- Vision call (chat.completions with image) -----
     const completion = await client.chat.completions.create({
-      model: "gpt-4o-mini", // any current vision-capable model you use
+      model: 'gpt-4o-mini',                 // vision-capable model
       temperature: 0,
       messages: [
-        { role: "system", content: SYSTEM_PROMPT },
+        { role: 'system', content: SYSTEM_PROMPT },
         {
-          role: "user",
+          role: 'user',
           content: [
-            { type: "input_text", text: "Extract the final results as JSON." },
-            { type: "input_image", image_url: `data:${mime};base64,${b64}` }
+            { type: 'text', text: 'Extract the final results as strict JSON.' },
+            {
+              type: 'image_url',
+              image_url: { url: `data:${mime};base64,${b64}` }
+            }
           ]
         }
       ]
     });
 
-    const text = completion.choices[0]?.message?.content || "";
-    // Best-effort JSON parse
-    const jsonStart = text.indexOf('{');
-    const jsonEnd = text.lastIndexOf('}');
-    if (jsonStart === -1 || jsonEnd === -1) throw new Error('No JSON returned');
-    const payload = JSON.parse(text.slice(jsonStart, jsonEnd + 1));
+    const raw = completion.choices?.[0]?.message?.content ?? '';
+    const parsed = safeParseJson(raw);
 
-    // Optional: add winner/diff here
-    const enriched = (payload.matchups || []).map((m:any) => {
-      const winner = m.homeScore >= m.awayScore ? m.homeTeam : m.awayTeam;
-      const diff = Math.abs(m.homeScore - m.awayScore);
-      return { ...m, winner, diff };
+    const matchups = Array.isArray(parsed?.matchups) ? parsed.matchups : [];
+    // Enrich with winner & diff (optional)
+    const enriched = matchups.map((m: any) => {
+      const homeScore = Number(m.homeScore);
+      const awayScore = Number(m.awayScore);
+      const winner = homeScore >= awayScore ? m.homeTeam : m.awayTeam;
+      const diff = Math.abs(homeScore - awayScore);
+      return { ...m, homeScore, awayScore, winner, diff };
     });
 
-    res.status(200).json({ matchups: enriched });
-  } catch (err:any) {
-    res.status(400).json({ error: err.message || String(err) });
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    return res.status(200).json({ matchups: enriched });
+  } catch (err: any) {
+    const msg = err?.message || String(err);
+    return res.status(400).json({ error: msg });
   }
 }

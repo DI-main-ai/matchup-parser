@@ -44,10 +44,22 @@ function safeParseJson(text) {
   return JSON.parse(text.slice(start, end + 1));
 }
 const SYSTEM_PROMPT = `
-Return ONLY:
-{ "matchups": [ { "homeTeam": string, "homeScore": number, "awayTeam": string, "awayScore": number } ] }
-Use the large bold numbers as final scores; ignore projections. Team names are the blue names. Keep capitalization and apostrophes. No extra text.
+You will output ONLY strict JSON with this shape:
+{
+  "matchups": [
+    { "homeTeam": string, "homeScore": number, "awayTeam": string, "awayScore": number }
+  ]
+}
+
+Rules:
+- Read the LARGE bold numbers as the final scores (ignore smaller numbers/projections).
+- Team names are the BLUE names; strip records/ranks like "1-1-0 | 6th".
+- Preserve capitalization and apostrophes in names.
+- **Scores must include EXACTLY two decimal places (e.g., 120.18). Do not round to integers. Do not change punctuation.**
+- If a character is ambiguous (I vs |), choose the letter that forms a real name.
+- Return ONLY the JSON object, no extra text.
 `;
+
 
 export default async function handler(req, res) {
   try {
@@ -81,20 +93,21 @@ export default async function handler(req, res) {
     const b64 = buffer.toString("base64");
 
     const completion = await client.chat.completions.create({
-      model: "gpt-4o-mini",
-      temperature: 0,
-      messages: [
-        { role: "system", content: SYSTEM_PROMPT },
-        {
-          role: "user",
-          content: [
-            { type: "text", text: "Extract final results as strict JSON." },
-            { type: "image_url", image_url: { url: `data:${mime};base64,${b64}` } }
-          ]
-        }
+  model: "gpt-4o-mini",
+  temperature: 0,
+  response_format: { type: "json_object" },   // ← add this
+  messages: [
+    { role: "system", content: SYSTEM_PROMPT },
+    {
+      role: "user",
+      content: [
+        { type: "text", text: "Extract final results as strict JSON." },
+        { type: "image_url", image_url: { url: `data:${mime};base64,${b64}` } }
       ]
-    });
-
+    }
+  ]
+});
+    
     const raw = completion.choices?.[0]?.message?.content || "";
     const parsed = safeParseJson(raw);
     const matchups = Array.isArray(parsed.matchups) ? parsed.matchups : [];

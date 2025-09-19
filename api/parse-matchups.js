@@ -60,6 +60,27 @@ Rules:
 - Return ONLY the JSON object, no extra text.
 `;
 
+export default async function handler(req, res) {
+  if (req.method !== 'POST') {
+    return res.status(405).json({ error: 'Method not allowed' });
+  }
+
+  const form = new multiparty.Form();
+  form.parse(req, async (err, fields, files) => {
+    if (err) return res.status(500).json({ error: 'File upload failed' });
+
+    const week = fields.week ? fields.week[0] : null;
+
+    // OCR + parsing logic here...
+    const result = await parseScreenshot(files.file[0].path);
+
+    res.status(200).json({
+      week: week || result.week || null, // prefer manual, fallback to OCR
+      matchups: result.matchups
+    });
+  });
+}
+
 
 export default async function handler(req, res) {
   try {

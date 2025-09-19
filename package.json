@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "type": "module",
   "dependencies": {
-    "openai": "^4.55.0",
-    "busboy": "^1.6.0"
+    "busboy": "^1.6.0",
+    "openai": "^4.55.0"
   }
 }

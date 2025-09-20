@@ -1,172 +1,205 @@
-// /api/parse-matchups.js
-// CommonJS serverless function for Vercel
+/* public/ui.js
+   Frontend for Matchup Parser
+   - Drag/drop or pick a screenshot
+   - Sends week + image to /api/parse-matchups
+   - Shows JSON result
+   - "Copy TSV" copies tab-delimited pairs exactly like the user's sample
+*/
 
-const OpenAI = require("openai");
+(() => {
+  // ---- DOM ----
+  const weekInput = document.getElementById("weekInput");
+  const drop = document.getElementById("drop");
+  const fileInput = document.getElementById("file");
 
-const client = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+  const btnUpload = document.getElementById("btnUpload");
+  const btnClear = document.getElementById("btnClear");
+  const btnCopyJson = document.getElementById("btnCopyJson");
+  const btnCopyTSV = document.getElementById("btnCopyTSV");
 
-/* ---------- Robust JSON extraction ---------- */
-function extractJson(text) {
-  if (!text) return null;
-  const s = String(text).trim();
+  const output = document.getElementById("output");
+  const statusEl = document.getElementById("status");
+  const tableWrap = document.getElementById("tableWrap");
+  const previewWrap = document.getElementById("previewWrap");
+  const previewImg = document.getElementById("preview");
 
-  // 1) Prefer a fenced ```json ... ``` block (capture inner, ignore fences)
-  const fence = s.match(/```(?:json|javascript|js)?\s*([\s\S]*?)\s*```/i);
-  if (fence && fence[1]) {
-    const inner = fence[1].trim();
-    try {
-      return JSON.parse(inner);
-    } catch (_) {
-      // continue to other strategies
-    }
+  // ---- State ----
+  let imageDataUrl = null;
+  let lastJson = null;
+  let lastTSV = "";
+
+  // ---- Helpers ----
+  const setStatus = (text) => (statusEl.textContent = text);
+  const enable = (el, v) => (el.disabled = !v);
+
+  function bytesToDataUrl(file) {
+    return new Promise((resolve, reject) => {
+      const fr = new FileReader();
+      fr.onload = () => resolve(fr.result);
+      fr.onerror = reject;
+      fr.readAsDataURL(file);
+    });
   }
 
-  // 2) If we can find the JSON object that starts at {"matchups":
-  const startIdx = s.indexOf('{"matchups"');
-  if (startIdx !== -1) {
-    const endIdx = s.lastIndexOf("}");
-    if (endIdx > startIdx) {
-      const candidate = s.slice(startIdx, endIdx + 1).trim();
-      try {
-        return JSON.parse(candidate);
-      } catch (_) {
-        // continue
+  function clearUI() {
+    imageDataUrl = null;
+    lastJson = null;
+    lastTSV = "";
+    fileInput.value = "";
+    previewWrap.style.display = "none";
+    previewImg.src = "";
+    output.textContent = "";
+    tableWrap.innerHTML = "";
+    setStatus("Ready");
+    enable(btnUpload, false);
+    enable(btnClear, false);
+    enable(btnCopyJson, false);
+    enable(btnCopyTSV, false);
+  }
+
+  // Format scores as shown in the screenshots (two decimals)
+  const fmt = (n) => {
+    if (typeof n === "number" && Number.isFinite(n)) return n.toFixed(2);
+    const num = Number(n);
+    return Number.isFinite(num) ? num.toFixed(2) : String(n);
+  };
+
+  // === TSV formatter: EXACTLY like the sample ===
+  // TeamA<TAB>Score
+  // TeamB<TAB>Score
+  //
+  // (blank line between matchups)
+  function toTSV(matchups) {
+    if (!Array.isArray(matchups)) return "";
+    const blocks = matchups.map((m) => {
+      const a = `${m.homeTeam}\t${fmt(m.homeScore)}`;
+      const b = `${m.awayTeam}\t${fmt(m.awayScore)}`;
+      return `${a}\n${b}`;
+    });
+    return blocks.join("\n\n");
+  }
+
+  // Optional mini table to eyeball results
+  function renderTable(matchups) {
+    if (!Array.isArray(matchups) || matchups.length === 0) {
+      tableWrap.innerHTML = "";
+      return;
+    }
+    const rows = matchups
+      .map(
+        (m) => `
+      <tr>
+        <td>${m.homeTeam}</td><td style="text-align:right">${fmt(m.homeScore)}</td>
+        <td style="padding:0 10px">vs</td>
+        <td>${m.awayTeam}</td><td style="text-align:right">${fmt(m.awayScore)}</td>
+      </tr>`
+      )
+      .join("");
+    tableWrap.innerHTML = `
+      <div style="margin-top:8px;font-size:12px;color:#9aa4ad">Preview</div>
+      <table style="width:100%;border-collapse:collapse;font-size:14px">
+        <tbody>${rows}</tbody>
+      </table>`;
+  }
+
+  // ---- Drag & Drop ----
+  drop.addEventListener("dragover", (e) => {
+    e.preventDefault();
+    drop.classList.add("dragover");
+  });
+  drop.addEventListener("dragleave", () => drop.classList.remove("dragover"));
+  drop.addEventListener("drop", async (e) => {
+    e.preventDefault();
+    drop.classList.remove("dragover");
+    const f = e.dataTransfer.files?.[0];
+    if (f) await handleFile(f);
+  });
+  drop.addEventListener("click", () => fileInput.click());
+  fileInput.addEventListener("change", async (e) => {
+    const f = e.target.files?.[0];
+    if (f) await handleFile(f);
+  });
+
+  async function handleFile(file) {
+    setStatus("Loading image…");
+    imageDataUrl = await bytesToDataUrl(file);
+    previewImg.src = imageDataUrl;
+    previewWrap.style.display = "block";
+    setStatus("Image ready");
+    enable(btnUpload, true);
+    enable(btnClear, true);
+  }
+
+  // ---- Upload & parse ----
+  btnUpload.addEventListener("click", async () => {
+    if (!imageDataUrl) return;
+    setStatus("Calling API…");
+    enable(btnUpload, false);
+
+    try {
+      const res = await fetch("/api/parse-matchups", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          week: (weekInput.value || "").trim(),
+          imageDataUrl, // base64 data URL
+        }),
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data?.error || `HTTP ${res.status}`);
       }
+
+      lastJson = data;
+      output.textContent = JSON.stringify(data, null, 2);
+
+      // Build TSV from the returned matchups, if present
+      if (data && Array.isArray(data.matchups)) {
+        lastTSV = toTSV(data.matchups);
+        renderTable(data.matchups);
+        enable(btnCopyTSV, true);
+      } else {
+        lastTSV = "";
+        renderTable([]);
+        enable(btnCopyTSV, false);
+      }
+
+      enable(btnCopyJson, true);
+      setStatus("Done");
+    } catch (err) {
+      output.textContent = JSON.stringify(
+        { error: String(err?.message || err) },
+        null,
+        2
+      );
+      lastJson = null;
+      lastTSV = "";
+      renderTable([]);
+      enable(btnCopyJson, false);
+      enable(btnCopyTSV, false);
+      setStatus("Error");
+    } finally {
+      enable(btnUpload, true);
     }
-  }
+  });
 
-  // 3) Very last resort: largest brace pair
-  const firstBrace = s.indexOf("{");
-  const lastBrace = s.lastIndexOf("}");
-  if (firstBrace !== -1 && lastBrace > firstBrace) {
-    const candidate = s.slice(firstBrace, lastBrace + 1).trim();
-    try {
-      return JSON.parse(candidate);
-    } catch (_) {
-      // give up
-    }
-  }
+  // ---- Copy buttons ----
+  btnCopyJson.addEventListener("click", async () => {
+    const txt = output.textContent || "";
+    if (!txt) return;
+    await navigator.clipboard.writeText(txt);
+    setStatus("JSON copied");
+  });
 
-  return null;
-}
+  btnCopyTSV.addEventListener("click", async () => {
+    if (!lastTSV) return;
+    await navigator.clipboard.writeText(lastTSV);
+    setStatus("TSV copied");
+  });
 
-/* ---------- Small helpers ---------- */
-const toNum = (v) =>
-  typeof v === "number" ? v : Number(String(v).replace(/[^\d.]/g, "") || 0);
+  btnClear.addEventListener("click", clearUI);
 
-/* ---------- Handler ---------- */
-module.exports = async (req, res) => {
-  if (req.method !== "POST") {
-    res.status(405).json({ error: "Use POST" });
-    return;
-  }
-
-  try {
-    // read JSON body sent by the UI
-    let body = "";
-    await new Promise((resolve) => {
-      req.on("data", (c) => (body += c));
-      req.on("end", resolve);
-    });
-
-    let payload;
-    try {
-      payload = JSON.parse(body || "{}");
-    } catch {
-      res.status(400).json({ error: "Body must be JSON." });
-      return;
-    }
-
-    const { week, imageDataUrl } = payload || {};
-    if (!imageDataUrl || typeof imageDataUrl !== "string") {
-      res.status(400).json({
-        error:
-          "Missing or invalid 'imageDataUrl'. Provide a data URL or public HTTP(S) image URL.",
-      });
-      return;
-    }
-
-    const instruction = `
-You are a strict JSON API. From this fantasy football screenshot "Week X Matchups", extract matchups.
-
-Return ONLY valid JSON (no prose, no code fences) exactly like:
-{
-  "matchups": [
-    {
-      "homeTeam": "string",
-      "homeScore": number,
-      "awayTeam": "string",
-      "awayScore": number,
-      "winner": "string",
-      "diff": number
-    }
-  ]
-}
-
-Rules:
-- Team names exactly as shown (case & punctuation).
-- Scores numeric.
-- winner = team with higher score.
-- diff = |homeScore - awayScore| with two decimals.
-- Do NOT include extra keys. Do NOT include "week".
-- Output JSON object ONLY (no Markdown fences).
-`.trim();
-
-    const completion = await client.chat.completions.create({
-      model: "gpt-4o-mini",
-      temperature: 0.1,
-      messages: [
-        {
-          role: "system",
-          content:
-            "You convert fantasy football screenshots into clean JSON. Respond with JSON only.",
-        },
-        {
-          role: "user",
-          content: [
-            {
-              type: "text",
-              text:
-                instruction +
-                `\n(Week hint from user: ${week ?? "unknown"})`,
-            },
-            // IMPORTANT: correct image payload shape
-            { type: "image_url", image_url: { url: imageDataUrl } },
-          ],
-        },
-      ],
-      max_tokens: 700,
-    });
-
-    const raw = (completion.choices?.[0]?.message?.content || "").trim();
-
-    const parsed = extractJson(raw);
-
-    if (!parsed || !parsed.matchups) {
-      res.status(502).json({
-        error: "Parser did not return expected JSON.",
-        raw,
-      });
-      return;
-    }
-
-    // Normalize/verify winner & diff just in case
-    parsed.matchups = parsed.matchups.map((m) => {
-      const homeTeam = String(m.homeTeam || "").trim();
-      const awayTeam = String(m.awayTeam || "").trim();
-      const homeScore = toNum(m.homeScore);
-      const awayScore = toNum(m.awayScore);
-      const diff = Number(Math.abs(homeScore - awayScore).toFixed(2));
-      const winner =
-        homeScore === awayScore ? "" : homeScore > awayScore ? homeTeam : awayTeam;
-
-      return { homeTeam, homeScore, awayTeam, awayScore, winner, diff };
-    });
-
-    res.status(200).json({ ok: true, week: week ?? null, ...parsed });
-  } catch (err) {
-    res.status(500).json({ error: String(err && err.message ? err.message : err) });
-  }
-};
+  // init
+  clearUI();
+})();

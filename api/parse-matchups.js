@@ -1,3 +1,6 @@
+// /api/parse-matchups.js
+// CommonJS serverless function for Vercel
+
 const OpenAI = require("openai");
 
 const client = new OpenAI({
@@ -11,55 +14,133 @@ module.exports = async (req, res) => {
   }
 
   try {
+    // Collect request body (we send JSON from the UI)
     let body = "";
     await new Promise((resolve) => {
       req.on("data", (c) => (body += c));
       req.on("end", resolve);
     });
 
-    const { week, imageDataUrl } = JSON.parse(body || "{}");
-    if (!imageDataUrl) {
-      res.status(400).json({ error: "Missing imageDataUrl" });
+    let payload;
+    try {
+      payload = JSON.parse(body || "{}");
+    } catch {
+      res.status(400).json({ error: "Body must be JSON." });
       return;
     }
 
-    // Call OpenAI with the screenshot
-    const prompt = `
-You are given a fantasy football screenshot. 
-Extract each matchup as structured JSON. 
-Include: team1 name, team1 score, team2 name, team2 score. 
-Also include the week number if provided (${week || "unknown"}).
-Return JSON only.
-    `;
+    const { week, imageDataUrl } = payload || {};
+    if (!imageDataUrl || typeof imageDataUrl !== "string") {
+      res.status(400).json({
+        error:
+          "Missing or invalid 'imageDataUrl'. Provide a data URL or public HTTP(S) image URL.",
+      });
+      return;
+    }
 
-    const result = await client.chat.completions.create({
+    // Prompt: keep it strict to encourage valid JSON only
+    const instruction = `
+You are a strict JSON API. From this fantasy football "Week X Matchups" screenshot, extract matchups.
+
+Return ONLY valid minified JSON (no prose) with:
+{
+  "matchups": [
+    {
+      "homeTeam": "string",
+      "homeScore": number,
+      "awayTeam": "string",
+      "awayScore": number,
+      "winner": "string",
+      "diff": number
+    }
+  ]
+}
+
+Rules:
+- Team names must be exactly as shown (case and punctuation).
+- Scores must be numbers (use two decimals when present).
+- "winner" is the team with the higher score.
+- "diff" = |homeScore - awayScore| with two decimals.
+- Do not include extra keys. Do not include a "week" key (the client passes it separately).
+- Output ONLY the JSON object, nothing else.
+    `.trim();
+
+    // IMPORTANT: image_url must be an object: { url: ... }
+    const completion = await client.chat.completions.create({
       model: "gpt-4o-mini",
+      temperature: 0.1,
       messages: [
-        { role: "system", content: "You are a JSON API that extracts structured data from fantasy football matchup screenshots." },
+        {
+          role: "system",
+          content:
+            "You convert fantasy football screenshots into clean, validated JSON. Respond with JSON only.",
+        },
         {
           role: "user",
           content: [
-            { type: "text", text: prompt },
-            { type: "image_url", image_url: imageDataUrl },
+            { type: "text", text: instruction + `\n(Week hint from user: ${week ?? "unknown"})` },
+            { type: "image_url", image_url: { url: imageDataUrl } },
           ],
         },
       ],
-      max_tokens: 500,
+      max_tokens: 700,
     });
 
+    const raw = (completion.choices?.[0]?.message?.content || "").trim();
+
+    // Try to JSON.parse directly; if it fails, try to salvage the first {...} block.
     let parsed;
     try {
-      parsed = JSON.parse(result.choices[0].message.content);
+      parsed = JSON.parse(raw);
     } catch {
-      parsed = { raw: result.choices[0].message.content };
+      const m = raw.match(/\{[\s\S]*\}$/); // last JSON object in the string
+      if (m) {
+        try {
+          parsed = JSON.parse(m[0]);
+        } catch {
+          // fall through
+        }
+      }
     }
+
+    if (!parsed || !parsed.matchups) {
+      res.status(502).json({
+        error: "Parser did not return expected JSON.",
+        raw,
+      });
+      return;
+    }
+
+    // Optional: light validation/normalization
+    const norm = (n) =>
+      typeof n === "number" ? n : Number(String(n).replace(/[^\d.]/g, "") || 0);
+
+    parsed.matchups = (parsed.matchups || []).map((m) => {
+      const homeScore = norm(m.homeScore);
+      const awayScore = norm(m.awayScore);
+      const diff = Math.abs(homeScore - awayScore);
+
+      return {
+        homeTeam: String(m.homeTeam || "").trim(),
+        homeScore,
+        awayTeam: String(m.awayTeam || "").trim(),
+        awayScore,
+        winner:
+          homeScore === awayScore
+            ? ""
+            : homeScore > awayScore
+            ? String(m.homeTeam || "").trim()
+            : String(m.awayTeam || "").trim(),
+        diff: Number(diff.toFixed(2)),
+      };
+    });
 
     res.status(200).json({
       ok: true,
-      week: week || null,
-      matchups: parsed,
+      week: week ?? null,
+      ...parsed,
     });
   } catch (err) {
-    res.status(500).json({ error: String(err) });
+    res.status(500).json({ error: String(err && err.message ? err.message : err) });
   }
 };

@@ -1,86 +1,88 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <title>Matchup Parser</title>
-    <style>
-      :root { color-scheme: dark; }
-      html,body { margin:0; padding:0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Inter, "Segoe UI", Arial; background:#0e1116; color:#e6e6e6; }
-      .wrap { max-width:1200px; margin:28px auto; padding:0 16px; }
-      h1 { margin:0 0 20px; font-size:28px; font-weight:700; }
-      .row { display:grid; grid-template-columns: 1fr 1.2fr; gap:18px; align-items:start; }
-      .panel { background:#131722; border:1px solid #232939; border-radius:14px; padding:16px; }
-      label { display:inline-block; margin-right:6px; }
-      input[type="number"] { width:110px; padding:10px 12px; border-radius:10px; border:1px solid #2a3144; background:#0f1420; color:#eaeaea; }
-      .drop { display:flex; align-items:center; justify-content:center; border:2px dashed #2a3144; border-radius:12px; height:300px; cursor:pointer; transition: .15s border-color ease; }
-      .drop.dragover { border-color:#6aa3ff; }
-      .muted { color:#a8b3cf; font-size:13px; }
-      .actions { margin-top:12px; display:flex; gap:10px; }
-      button { background:#1b2437; border:1px solid #2b3550; color:#e6e6e6; padding:10px 14px; border-radius:10px; cursor:pointer; }
-      button:disabled { opacity:0.6; cursor:default; }
-      pre { white-space:pre; background:#0f1420; border:1px solid #232939; border-radius:10px; padding:12px; overflow:auto; min-height:220px; }
-      #resultWrap { display:flex; flex-direction:column; gap:14px; }
-      #preview { max-width:100%; border-radius:10px; border:1px solid #232939; }
-      .header-row { display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; }
-      .copy-group { display:flex; gap:10px; }
-      @media (max-width: 950px){ .row{ grid-template-columns: 1fr; } }
-    </style>
-  </head>
-  <body>
-    <div class="wrap">
-      <h1>Matchup Parser</h1>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Matchup Parser</title>
+  <style>
+    :root {
+      --bg: #0f1115;
+      --panel: #171a20;
+      --text: #e7e7e7;
+      --muted: #9aa3af;
+      --accent: #4f46e5;
+      --border: #2a2f3a;
+      --success: #22c55e;
+      --error: #ef4444;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    }
+    html, body { background: var(--bg); color: var(--text); margin: 0; font: 16px/1.4 system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji","Segoe UI Emoji"; }
+    .wrap { max-width: 1200px; margin: 32px auto; padding: 0 16px; }
+    h1 { margin: 0 0 16px; font-size: 28px; }
+    .grid { display: grid; gap: 16px; grid-template-columns: 1fr 1.2fr; }
+    .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 16px; }
+    label { display: block; font-size: 14px; margin: 0 0 8px; color: var(--muted); }
+    #weekInput { width: 120px; border: 1px solid var(--border); border-radius: 8px; background: #10131a; color: var(--text); padding: 8px 10px; font-size: 16px; }
+    .drop { position: relative; display: block; border: 2px dashed var(--border); border-radius: 12px; height: 320px; display:flex; align-items:center; justify-content:center; text-align:center; color: var(--muted); transition: border-color .15s ease; cursor: pointer; }
+    .drop.drag { border-color: var(--accent); }
+    .actions { display: flex; gap: 8px; margin-top: 12px; }
+    button { background: #1f2430; color: var(--text); border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px; cursor: pointer; }
+    button[disabled] { opacity: .5; cursor: default; }
+    .muted { color: var(--muted); font-size: 13px; }
+    #previewWrap { display:none; margin-top: 10px; }
+    #preview { max-width: 100%; border-radius: 8px; border: 1px solid var(--border); }
+    .header { display:flex; justify-content: space-between; align-items:center; margin-bottom: 8px; }
+    .header .status { font-size: 13px; color: var(--muted); }
+    .code-group { display:grid; gap:12px; }
+    .block-title { font-size: 13px; color: var(--muted); }
+    pre { background: #11141a; border: 1px solid var(--border); border-radius: 10px; padding: 12px; min-height: 180px; white-space: pre; overflow:auto; font-family: var(--mono); font-size: 13px; }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Matchup Parser</h1>
 
-      <div class="row">
-        <!-- Left: input panel -->
-        <section class="panel">
-          <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
-            <label for="weekInput">Week:</label>
-            <input type="number" id="weekInput" min="0" max="30" value="0" />
-          </div>
+  <div class="grid">
+    <section class="panel">
+      <label for="weekInput">Week:</label>
+      <input type="number" id="weekInput" min="0" max="99" value="0" />
 
-          <label id="drop" class="drop">
-            <div>
-              <div style="font-size:16px;font-weight:700;text-align:center">Drag & drop a screenshot here</div>
-              <div class="muted" style="margin-top:6px;text-align:center">…or click to choose a file, or paste (Ctrl/Cmd+V)</div>
-            </div>
-            <input id="file" type="file" accept="image/*" style="display:none" />
-          </label>
+      <label id="drop" class="drop">
+        <div>
+          <div style="font-weight:600; font-size:16px">Drag & drop a screenshot here</div>
+          <div class="muted" style="margin-top:6px">…or click to choose a file, or paste (Ctrl/Cmd+V)</div>
+        </div>
+        <input id="file" type="file" accept="image/*" style="position:absolute; inset:0; opacity:0; cursor:pointer" />
+      </label>
 
-          <div class="actions">
-            <button id="btnUpload" disabled>Upload & Parse</button>
-            <button id="btnClear" disabled>Clear</button>
-          </div>
-
-          <div id="previewWrap" style="margin-top:12px; display:none">
-            <img id="preview" alt="preview"/>
-          </div>
-        </section>
-
-        <!-- Right: results panel -->
-        <section class="panel">
-          <div class="header-row">
-            <div>API response <span id="status" class="muted">Ready</span></div>
-            <div class="copy-group">
-              <button id="btnCopyTSV" disabled>Copy TSV</button>
-              <button id="btnCopyJson" disabled>Copy JSON</button>
-            </div>
-          </div>
-
-          <div id="resultWrap">
-            <div class="resultBlock">
-              <div class="muted" style="margin-bottom:6px">TSV</div>
-              <pre id="tsvOut"></pre>
-            </div>
-            <div class="resultBlock">
-              <div class="muted" style="margin-bottom:6px">JSON</div>
-              <pre id="jsonOut"></pre>
-            </div>
-          </div>
-        </section>
+      <div class="actions">
+        <button id="btnUpload" disabled>Upload & Parse</button>
+        <button id="btnClear" disabled>Clear</button>
       </div>
-    </div>
 
-    <script src="/ui.js" defer></script>
-  </body>
+      <div id="previewWrap"><img id="preview" alt="preview" /></div>
+    </section>
+
+    <section class="panel">
+      <div class="header">
+        <div>API response <span id="status" class="status">Ready</span></div>
+        <div class="actions">
+          <button id="btnCopyTSV" disabled>Copy TSV</button>
+          <button id="btnCopyJSON" disabled>Copy JSON</button>
+        </div>
+      </div>
+
+      <div class="code-group">
+        <div class="block-title">TSV</div>
+        <pre id="tsvOut"></pre>
+
+        <div class="block-title">JSON</div>
+        <pre id="jsonOut"></pre>
+      </div>
+    </section>
+  </div>
+</div>
+
+<script src="/ui.js" defer></script>
+</body>
 </html>

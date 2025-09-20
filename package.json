@@ -1,9 +1,10 @@
 {
   "name": "matchup-parser",
-  "private": true,
   "version": "1.0.0",
-  "license": "MIT",
+  "private": true,
   "dependencies": {
+    "busboy": "^1.6.0",
+    "multiparty": "^4.2.3",
     "openai": "^4.58.0"
   }
 }

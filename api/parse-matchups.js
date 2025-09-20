@@ -1,108 +1,119 @@
-// /api/parse-matchups.js
-const OpenAI = require("openai");
+// api/parse-matchups.js
+import OpenAI from "openai";
 
-module.exports = async (req, res) => {
-  const requestId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-
-  const bad = (status, msg, extra = {}) =>
-    res.status(status).json({ error: msg, requestId, ...extra });
-
+export default async function handler(req, res) {
   try {
     if (req.method !== "POST") {
-      return bad(405, "Method not allowed");
+      return res.status(405).json({ error: "Method not allowed" });
     }
 
-    if (!process.env.OPENAI_API_KEY) {
-      return bad(500, "Missing OPENAI_API_KEY");
-    }
-
-    let body;
-    try {
-      body = req.body && typeof req.body === "object" ? req.body : JSON.parse(req.body || "{}");
-    } catch {
-      return bad(400, "Body must be JSON");
-    }
-
-    const week = (body.week || "").toString().trim();
-    const imageDataUrl = (body.imageDataUrl || "").toString();
-
-    if (!imageDataUrl.startsWith("data:image/")) {
-      return bad(400, "imageDataUrl must be a data URL (data:image/...)");
+    const { imageDataUrl, filenameWeek, selectorWeek } = req.body || {};
+    if (!imageDataUrl || typeof imageDataUrl !== "string") {
+      return res.status(400).json({ error: "imageDataUrl is required" });
     }
 
     const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-
-    // Build the prompt
-    const systemPrompt =
-      "You are a strict JSON parser. Return only JSON with the shape: " +
-      '{"matchups":[{"homeTeam":string,"homeScore":number,"awayTeam":string,"awayScore":number,"winner":string,"diff":number}]} ' +
-      "No extra commentary or code fences.";
-
-    const userText =
-      "Parse the attached ESPN fantasy screenshot into JSON. " +
-      (week ? `The week for these matchups is ${week}. ` : "") +
-      "Use exact team names and two-decimal scores. Winner is the higher score; diff is absolute difference to two decimals.";
-
-    // Chat Completions w/ image
-    const completion = await client.chat.completions.create({
-      model: "gpt-4o-mini",
-      temperature: 0,
-      messages: [
-        { role: "system", content: systemPrompt },
-        {
-          role: "user",
-          content: [
-            { type: "text", text: userText },
-            { type: "image_url", image_url: { url: imageDataUrl } },
-          ],
-        },
-      ],
-    });
-
-    const raw = completion?.choices?.[0]?.message?.content || "";
-    if (!raw) {
-      return bad(502, "OpenAI returned no content");
+    if (!process.env.OPENAI_API_KEY) {
+      return res.status(500).json({ error: "Missing OPENAI_API_KEY" });
     }
 
-    // Extract raw JSON (strip ```json fences if present)
-    const jsonText = (() => {
-      const fence = raw.match(/```json\s*([\s\S]*?)```/i);
-      if (fence) return fence[1].trim();
-      // otherwise assume whole content is JSON
-      return raw.trim();
-    })();
+    // Build one vision call that returns strict JSON with optional "week"
+    // Week instruction: detect the integer shown as "Week N" in the header if present.
+    const messages = [
+      {
+        role: "system",
+        content:
+          "You extract fantasy football matchup results from a scoreboard screenshot and return STRICT JSON. " +
+          "If the screenshot shows a header like 'Week 2 Matchups', set week to that integer; else set week to null. " +
+          "Return ONLY JSON; no markdown fences.",
+      },
+      {
+        role: "user",
+        content: [
+          {
+            type: "input_text",
+            text:
+              "Return JSON of the shape: " +
+              `{"week": <number|null>, "matchups":[{"homeTeam":"","homeScore":0,"awayTeam":"","awayScore":0,"winner":"","diff":0}]}. ` +
+              "Use the main bold scores for each matchup. Team names and scores must be exact.",
+          },
+          {
+            type: "input_image",
+            image_url: imageDataUrl,
+          },
+        ],
+      },
+    ];
 
+    const resp = await client.responses.create({
+      model: "gpt-4o-mini",
+      input: messages,
+      temperature: 0.1,
+    });
+
+    const text = resp.output_text || "";
+    // The model must return plain JSON; try to parse directly
     let parsed;
     try {
-      parsed = JSON.parse(jsonText);
-    } catch (e) {
-      return bad(422, "Parser did not return expected JSON.", { raw });
+      parsed = JSON.parse(text);
+    } catch {
+      // Some safety: if the model wrapped in ```json fences, strip them.
+      const m = text.match(/```json\s*([\s\S]*?)```/i);
+      if (m) {
+        parsed = JSON.parse(m[1]);
+      } else {
+        return res
+          .status(500)
+          .json({ error: "Parser did not return JSON", raw: text.slice(0, 5000) });
+      }
     }
 
-    // Basic validation
-    if (!parsed || !Array.isArray(parsed.matchups)) {
-      return bad(422, "JSON missing matchups array.", { raw: jsonText });
-    }
+    // Normalize/validate minimal fields
+    const fromImageWeek =
+      typeof parsed?.week === "number" && Number.isFinite(parsed.week)
+        ? parsed.week
+        : null;
 
-    // Normalize numbers
-    parsed.matchups = parsed.matchups.map((m) => ({
-      homeTeam: String(m.homeTeam || "").trim(),
-      homeScore: Number(m.homeScore),
-      awayTeam: String(m.awayTeam || "").trim(),
-      awayScore: Number(m.awayScore),
-      winner: String(m.winner || "").trim(),
-      diff: Number(m.diff),
-    }));
+    const matchups = Array.isArray(parsed?.matchups) ? parsed.matchups : [];
+    const normalized = matchups
+      .map((m) => ({
+        homeTeam: String(m.homeTeam || "").trim(),
+        homeScore: Number(m.homeScore ?? NaN),
+        awayTeam: String(m.awayTeam || "").trim(),
+        awayScore: Number(m.awayScore ?? NaN),
+      }))
+      .filter(
+        (m) =>
+          m.homeTeam &&
+          m.awayTeam &&
+          Number.isFinite(m.homeScore) &&
+          Number.isFinite(m.awayScore)
+      )
+      .map((m) => {
+        const winner =
+          m.homeScore > m.awayScore
+            ? m.homeTeam
+            : m.awayScore > m.homeScore
+            ? m.awayTeam
+            : "TIE";
+        const diff = Math.abs(m.homeScore - m.awayScore);
+        return { ...m, winner, diff: Number(diff.toFixed(2)) };
+      });
+
+    // Resolve final week by priority: filename → image OCR → selector
+    const weekFinal =
+      (Number.isFinite(filenameWeek) && filenameWeek) ||
+      (Number.isFinite(fromImageWeek) && fromImageWeek) ||
+      (Number.isFinite(selectorWeek) && selectorWeek) ||
+      null;
 
     return res.status(200).json({
-      week: week || null,
-      matchups: parsed.matchups,
-      requestId,
+      week: weekFinal,
+      matchups: normalized,
     });
   } catch (err) {
-    // Surface a clean JSON error no matter what
     return res
       .status(500)
-      .json({ error: "A server error has occurred", requestId, detail: String(err && err.message || err) });
+      .json({ error: String(err?.message || err || "Unknown error") });
   }
-};
+}

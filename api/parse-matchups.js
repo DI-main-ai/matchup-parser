@@ -7,6 +7,56 @@ const client = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
+/* ---------- Robust JSON extraction ---------- */
+function extractJson(text) {
+  if (!text) return null;
+  const s = String(text).trim();
+
+  // 1) Prefer a fenced ```json ... ``` block (capture inner, ignore fences)
+  const fence = s.match(/```(?:json|javascript|js)?\s*([\s\S]*?)\s*```/i);
+  if (fence && fence[1]) {
+    const inner = fence[1].trim();
+    try {
+      return JSON.parse(inner);
+    } catch (_) {
+      // continue to other strategies
+    }
+  }
+
+  // 2) If we can find the JSON object that starts at {"matchups":
+  const startIdx = s.indexOf('{"matchups"');
+  if (startIdx !== -1) {
+    const endIdx = s.lastIndexOf("}");
+    if (endIdx > startIdx) {
+      const candidate = s.slice(startIdx, endIdx + 1).trim();
+      try {
+        return JSON.parse(candidate);
+      } catch (_) {
+        // continue
+      }
+    }
+  }
+
+  // 3) Very last resort: largest brace pair
+  const firstBrace = s.indexOf("{");
+  const lastBrace = s.lastIndexOf("}");
+  if (firstBrace !== -1 && lastBrace > firstBrace) {
+    const candidate = s.slice(firstBrace, lastBrace + 1).trim();
+    try {
+      return JSON.parse(candidate);
+    } catch (_) {
+      // give up
+    }
+  }
+
+  return null;
+}
+
+/* ---------- Small helpers ---------- */
+const toNum = (v) =>
+  typeof v === "number" ? v : Number(String(v).replace(/[^\d.]/g, "") || 0);
+
+/* ---------- Handler ---------- */
 module.exports = async (req, res) => {
   if (req.method !== "POST") {
     res.status(405).json({ error: "Use POST" });
@@ -14,7 +64,7 @@ module.exports = async (req, res) => {
   }
 
   try {
-    // Collect request body (we send JSON from the UI)
+    // read JSON body sent by the UI
     let body = "";
     await new Promise((resolve) => {
       req.on("data", (c) => (body += c));
@@ -38,11 +88,10 @@ module.exports = async (req, res) => {
       return;
     }
 
-    // Prompt: keep it strict to encourage valid JSON only
     const instruction = `
-You are a strict JSON API. From this fantasy football "Week X Matchups" screenshot, extract matchups.
+You are a strict JSON API. From this fantasy football screenshot "Week X Matchups", extract matchups.
 
-Return ONLY valid minified JSON (no prose) with:
+Return ONLY valid JSON (no prose, no code fences) exactly like:
 {
   "matchups": [
     {
@@ -57,15 +106,14 @@ Return ONLY valid minified JSON (no prose) with:
 }
 
 Rules:
-- Team names must be exactly as shown (case and punctuation).
-- Scores must be numbers (use two decimals when present).
-- "winner" is the team with the higher score.
-- "diff" = |homeScore - awayScore| with two decimals.
-- Do not include extra keys. Do not include a "week" key (the client passes it separately).
-- Output ONLY the JSON object, nothing else.
-    `.trim();
+- Team names exactly as shown (case & punctuation).
+- Scores numeric.
+- winner = team with higher score.
+- diff = |homeScore - awayScore| with two decimals.
+- Do NOT include extra keys. Do NOT include "week".
+- Output JSON object ONLY (no Markdown fences).
+`.trim();
 
-    // IMPORTANT: image_url must be an object: { url: ... }
     const completion = await client.chat.completions.create({
       model: "gpt-4o-mini",
       temperature: 0.1,
@@ -73,12 +121,18 @@ Rules:
         {
           role: "system",
           content:
-            "You convert fantasy football screenshots into clean, validated JSON. Respond with JSON only.",
+            "You convert fantasy football screenshots into clean JSON. Respond with JSON only.",
         },
         {
           role: "user",
           content: [
-            { type: "text", text: instruction + `\n(Week hint from user: ${week ?? "unknown"})` },
+            {
+              type: "text",
+              text:
+                instruction +
+                `\n(Week hint from user: ${week ?? "unknown"})`,
+            },
+            // IMPORTANT: correct image payload shape
             { type: "image_url", image_url: { url: imageDataUrl } },
           ],
         },
@@ -88,20 +142,7 @@ Rules:
 
     const raw = (completion.choices?.[0]?.message?.content || "").trim();
 
-    // Try to JSON.parse directly; if it fails, try to salvage the first {...} block.
-    let parsed;
-    try {
-      parsed = JSON.parse(raw);
-    } catch {
-      const m = raw.match(/\{[\s\S]*\}$/); // last JSON object in the string
-      if (m) {
-        try {
-          parsed = JSON.parse(m[0]);
-        } catch {
-          // fall through
-        }
-      }
-    }
+    const parsed = extractJson(raw);
 
     if (!parsed || !parsed.matchups) {
       res.status(502).json({
@@ -111,35 +152,20 @@ Rules:
       return;
     }
 
-    // Optional: light validation/normalization
-    const norm = (n) =>
-      typeof n === "number" ? n : Number(String(n).replace(/[^\d.]/g, "") || 0);
+    // Normalize/verify winner & diff just in case
+    parsed.matchups = parsed.matchups.map((m) => {
+      const homeTeam = String(m.homeTeam || "").trim();
+      const awayTeam = String(m.awayTeam || "").trim();
+      const homeScore = toNum(m.homeScore);
+      const awayScore = toNum(m.awayScore);
+      const diff = Number(Math.abs(homeScore - awayScore).toFixed(2));
+      const winner =
+        homeScore === awayScore ? "" : homeScore > awayScore ? homeTeam : awayTeam;
 
-    parsed.matchups = (parsed.matchups || []).map((m) => {
-      const homeScore = norm(m.homeScore);
-      const awayScore = norm(m.awayScore);
-      const diff = Math.abs(homeScore - awayScore);
-
-      return {
-        homeTeam: String(m.homeTeam || "").trim(),
-        homeScore,
-        awayTeam: String(m.awayTeam || "").trim(),
-        awayScore,
-        winner:
-          homeScore === awayScore
-            ? ""
-            : homeScore > awayScore
-            ? String(m.homeTeam || "").trim()
-            : String(m.awayTeam || "").trim(),
-        diff: Number(diff.toFixed(2)),
-      };
+      return { homeTeam, homeScore, awayTeam, awayScore, winner, diff };
     });
 
-    res.status(200).json({
-      ok: true,
-      week: week ?? null,
-      ...parsed,
-    });
+    res.status(200).json({ ok: true, week: week ?? null, ...parsed });
   } catch (err) {
     res.status(500).json({ error: String(err && err.message ? err.message : err) });
   }

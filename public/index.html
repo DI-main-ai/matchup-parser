@@ -1,65 +1,101 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8"/>
-    <meta name="viewport" content="width=device-width,initial-scale=1"/>
-    <title>Matchup Parser</title>
-    <style>
-      body{margin:0;background:#0f1318;color:#e8eaf0;font:16px/1.4 system-ui,Segoe UI,Roboto,Helvetica,Arial}
-      header{padding:18px 20px;font-weight:700}
-      main{padding:0 20px 40px;max-width:1200px;margin:0 auto}
-      .row{display:grid;gap:20px;grid-template-columns:1fr 1fr}
-      .panel{background:#141a22;border:1px solid #222a35;border-radius:10px;padding:16px}
-      label.drop{border:2px dashed #2b3646;border-radius:10px;height:360px;display:flex;align-items:center;justify-content:center;cursor:pointer}
-      label.drop:hover{background:#11161e}
-      #output{background:#0c1117;border:1px solid #222a35;border-radius:8px;padding:12px;min-height:320px;overflow:auto}
-      button{background:#1f2937;color:#e8eaf0;border:1px solid #334155;border-radius:8px;padding:8px 12px;cursor:pointer}
-      button:disabled{opacity:.5;cursor:not-allowed}
-      input[type=number],input[type=text]{background:#0c1117;color:#e8eaf0;border:1px solid #334155;border-radius:8px;padding:6px 10px}
-      .muted{color:#9aa6b2}
-    </style>
-  </head>
-  <body>
-    <header>Matchup Parser</header>
-    <main>
-      <div class="row">
-        <section class="panel">
-          <div style="display:flex;gap:10px;align-items:center;margin-bottom:10px">
-            <div>Week:</div>
-            <input type="number" id="weekInput" min="1" max="18" value="1" />
-          </div>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Matchup Parser</title>
+  <style>
+    :root {
+      --bg: #0e141b;
+      --panel: #121a23;
+      --text: #e6edf3;
+      --muted: #9aa4ad;
+      --accent: #1f6feb;
+      --dash: #2a3642;
+    }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji","Segoe UI Emoji";
+    }
+    header { padding: 16px 20px; font-weight: 700; font-size: 18px; }
+    main { padding: 10px 20px 24px; }
+    .row { display: grid; grid-template-columns: 380px 1fr; gap: 18px; }
+    .panel {
+      background: var(--panel);
+      border-radius: 10px;
+      padding: 16px;
+      box-shadow: 0 0 0 1px #0b1117 inset;
+    }
+    .muted { color: var(--muted); }
+    .actions { display:flex; gap:10px; margin-top: 10px; }
+    button {
+      background:#1f2937; color:var(--text); border:1px solid #2b3644;
+      padding:8px 12px; border-radius:8px; cursor:pointer;
+    }
+    button:disabled { opacity:.55; cursor:not-allowed; }
+    .drop {
+      margin-top:10px; height: 360px; border:2px dashed var(--dash);
+      border-radius:12px; display:flex; align-items:center; justify-content:center;
+      text-align:center; padding: 12px; cursor:pointer; background:#0f171f;
+    }
+    .drop.dragover { border-color: var(--accent); box-shadow: 0 0 0 2px #1f6feb30 inset; }
+    .preview { max-width:100%; max-height:200px; border-radius:8px; display:block; }
+    pre {
+      background:#0f171f; border:1px solid #1b2632; border-radius:8px;
+      color:#c7d1db; padding:12px; white-space:pre-wrap; min-height:220px;
+    }
+    table { width:100%; border-collapse: collapse; }
+    td { padding: 6px 0; border-bottom: 1px solid #1b2632; }
+    td:nth-child(2), td:nth-child(5) { text-align:right; width: 90px; }
+  </style>
+</head>
+<body>
+  <header>Matchup Parser</header>
+  <main>
+    <div class="row">
+      <!-- LEFT -->
+      <section class="panel">
+        <label for="weekInput" class="muted">Week:</label>
+        <input id="weekInput" type="number" min="1" max="18" value="1"
+               style="margin-left:8px;width:80px;background:#0f171f;border:1px solid #1b2632;color:var(--text);border-radius:8px;padding:6px 8px" />
 
-          <label id="drop" class="drop">
-            <div>
-              <div style="font-size:15px;font-weight:700">Drag & drop a screenshot here</div>
-              <div class="muted" style="margin-top:6px">…or click to choose a file, or paste (Ctrl/Cmd+V)</div>
-            </div>
-            <input id="file" type="file" accept="image/*" hidden />
-          </label>
-
-          <div style="display:flex;gap:10px;margin-top:12px">
-            <button id="btnUpload" disabled>Upload & Parse</button>
-            <button id="btnClear"  disabled>Clear</button>
+        <label id="drop" class="drop">
+          <div>
+            <div style="font-size:15px;font-weight:700">Drag & drop a screenshot here</div>
+            <div class="muted" style="margin-top:6px">…or click to choose a file, or paste (Ctrl/Cmd+V)</div>
           </div>
+          <input id="file" type="file" accept="image/*" hidden />
+        </label>
 
-          <div id="previewWrap" style="margin-top:12px; display:none">
-            <img id="preview" alt="preview" style="max-width:100%;border-radius:8px;border:1px solid #222a35"/>
-          </div>
-        </section>
+        <div class="actions">
+          <button id="btnUpload" disabled>Upload & Parse</button>
+          <button id="btnClear" disabled>Clear</button>
+        </div>
 
-        <section class="panel">
-          <div style="display:flex;justify-content:space-between;align-items:center;gap:10px">
-            <div>API response</div>
-            <div style="display:flex;gap:8px">
-              <button id="btnCopyJson" disabled>Copy JSON</button>
-              <button id="btnCopyTSV"  disabled>Copy TSV</button>
-            </div>
+        <div id="previewWrap" style="margin-top:12px; display:none">
+          <img id="preview" class="preview" alt="preview"/>
+        </div>
+      </section>
+
+      <!-- RIGHT -->
+      <section class="panel">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:10px">
+          <div>API response <span id="status" class="muted" style="margin-left:8px">Ready</span></div>
+          <div class="actions" style="margin:0">
+            <button id="btnCopyJson" disabled>Copy JSON</button>
+            <button id="btnCopyTSV" disabled>Copy TSV</button>
           </div>
-          <div id="status" class="muted" style="margin:8px 0 12px">Ready</div>
-          <pre id="output"></pre>
-        </section>
-      </div>
-    </main>
-    <script src="/ui.js"></script>
-  </body>
+        </div>
+
+        <pre id="output"></pre>
+        <div id="tableWrap" style="margin-top:12px"></div>
+      </section>
+    </div>
+  </main>
+
+  <script src="/ui.js" defer></script>
+</body>
 </html>

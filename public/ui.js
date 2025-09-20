@@ -1,7 +1,7 @@
-/* ui.js — renders TSV and JSON exactly as requested */
+/* ui.js — robust UI (null-safe), TSV format exact, week detection hierarchy */
 
 (() => {
-  // --- DOM -------------
+  // DOM
   const weekInput   = document.getElementById("weekInput");
   const fileInput   = document.getElementById("file");
   const dropZone    = document.getElementById("drop");
@@ -18,33 +18,32 @@
 
   const statusEl    = document.getElementById("status");
 
-  // --- state -----------
+  // State
   let imageDataUrl = null;
 
-  // --- helpers ---------
-  const fmt2 = (n) => Number(n).toFixed(2); // keep trailing zeros (e.g., 0.70)
-  const enable = (el, on = true) => { el.disabled = !on; };
-
-  function setStatus(s) { statusEl.textContent = s; }
+  // Utils
+  const fmt2 = (n) => Number(n).toFixed(2);
+  const setStatus = (s) => { if (statusEl) statusEl.textContent = s; };
+  const setDisabled = (el, v) => { if (el) el.disabled = !!v; };
 
   function showPreview(src) {
+    if (!previewWrap || !previewImg) return;
     if (!src) { previewWrap.style.display = "none"; return; }
     previewImg.src = src;
     previewWrap.style.display = "block";
   }
 
-  // Try to pull week from filename like "Week 3.png"
+  // filename → week number (e.g. "Week 3.png")
   function maybeWeekFromFilename(file) {
     if (!file || !file.name) return null;
     const m = /week\s*(\d{1,2})/i.exec(file.name);
     return m ? Number(m[1]) : null;
   }
 
-  // --- TSV builder (this is the bit you asked for) -------------------------
+  // Build TSV locally if API doesn't send `tsv`
   function buildTSV(payload) {
-    // payload = { week, matchups:[{homeTeam,homeScore,awayTeam,awayScore,winner,diff}, ...] }
     const w = payload?.week ?? "";
-    const lines = (payload?.matchups ?? []).map(m =>
+    const rows = (payload?.matchups ?? []).map(m =>
       [
         m.homeTeam,
         fmt2(m.homeScore),
@@ -54,16 +53,13 @@
         fmt2(m.diff)
       ].join("\t")
     );
-    // Week on first line, then a blank line, then rows
-    return `${w}\n\n${lines.join("\n")}`;
+    return `${w}\n\n${rows.join("\n")}`;
   }
 
-  // --- copy helpers ---------------------------------------------------------
   async function copy(text) {
     try { await navigator.clipboard.writeText(text); } catch {}
   }
 
-  // --- file / paste handling ------------------------------------------------
   function readFileToDataURL(file) {
     return new Promise((resolve, reject) => {
       const fr = new FileReader();
@@ -75,101 +71,111 @@
 
   async function acceptFile(file) {
     if (!file) return;
-    // prefer week from filename, if present
     const w = maybeWeekFromFilename(file);
-    if (w) weekInput.value = String(w);
+    if (w && weekInput) weekInput.value = String(w); // priority 1: filename
 
     imageDataUrl = await readFileToDataURL(file);
     showPreview(imageDataUrl);
-    enable(btnUpload, true);
-    enable(btnClear, true);
+    setDisabled(btnUpload, false);
+    setDisabled(btnClear, false);
   }
 
-  // drag&drop
-  dropZone.addEventListener("dragover", (e) => {
-    e.preventDefault();
-    dropZone.classList.add("drag");
-  });
-  dropZone.addEventListener("dragleave", () => dropZone.classList.remove("drag"));
-  dropZone.addEventListener("drop", async (e) => {
-    e.preventDefault();
-    dropZone.classList.remove("drag");
-    const file = e.dataTransfer?.files?.[0];
-    if (file) acceptFile(file);
-  });
+  // Drag & drop
+  if (dropZone) {
+    dropZone.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      dropZone.classList.add("drag");
+    });
+    dropZone.addEventListener("dragleave", () => dropZone.classList.remove("drag"));
+    dropZone.addEventListener("drop", async (e) => {
+      e.preventDefault();
+      dropZone.classList.remove("drag");
+      const f = e.dataTransfer?.files?.[0];
+      if (f) acceptFile(f);
+    });
+  }
 
-  // choose
-  fileInput.addEventListener("change", async (e) => {
-    const file = e.target.files?.[0];
-    if (file) acceptFile(file);
-  });
+  // Choose
+  if (fileInput) {
+    fileInput.addEventListener("change", async (e) => {
+      const f = e.target.files?.[0];
+      if (f) acceptFile(f);
+    });
+  }
 
-  // paste (screenshot)
+  // Paste screenshot
   window.addEventListener("paste", async (e) => {
-    const item = [...(e.clipboardData?.items || [])].find(i => i.type.startsWith("image/"));
+    const item = [...(e.clipboardData?.items || [])].find(i => i.type?.startsWith("image/"));
     if (!item) return;
     const file = item.getAsFile();
     if (file) acceptFile(file);
   });
 
-  // --- upload & render ------------------------------------------------------
-  btnUpload.addEventListener("click", async () => {
-    if (!imageDataUrl) return;
-    enable(btnUpload, false);
-    setStatus("Calling API...");
+  // Upload & parse
+  if (btnUpload) {
+    btnUpload.addEventListener("click", async () => {
+      if (!imageDataUrl) return;
+      setDisabled(btnUpload, true);
+      setStatus("Calling API...");
 
-    const week = Number(weekInput.value || 0) || 0;
+      const week = Number(weekInput?.value || 0) || 0; // priority 3 (fallback) – API may override if OCR finds week
 
-    try {
-      const res = await fetch("/api/parse-matchups", {
-        method: "POST",
-        headers: {"content-type":"application/json"},
-        body: JSON.stringify({ week, imageDataUrl })
-      });
+      try {
+        const res = await fetch("/api/parse-matchups", {
+          method: "POST",
+          headers: {"content-type":"application/json"},
+          body: JSON.stringify({ week, imageDataUrl })
+        });
 
-      const data = await res.json();
+        const data = await res.json();
 
-      // If server inferred week, reflect it in the selector
-      if (typeof data.week !== "undefined" && data.week !== null) {
-        weekInput.value = String(data.week);
+        // If API inferred a week (priority 2), reflect it in the selector.
+        if (typeof data.week === "number" && weekInput) {
+          weekInput.value = String(data.week);
+        }
+
+        const tsv = data.tsv || buildTSV(data);
+        if (tsvOut) tsvOut.textContent = tsv;
+
+        if (jsonOut) jsonOut.textContent = JSON.stringify(
+          { week: data.week, matchups: data.matchups },
+          null, 2
+        );
+
+        setStatus("Done");
+        setDisabled(btnCopyTSV, false);
+        setDisabled(btnCopyJSON, false);
+      } catch (err) {
+        if (tsvOut)  tsvOut.textContent = "";
+        if (jsonOut) jsonOut.textContent = JSON.stringify({ error: String(err) }, null, 2);
+        setStatus("Error");
+      } finally {
+        setDisabled(btnUpload, false);
       }
+    });
+  }
 
-      // Render TSV exactly as requested (week, blank line, rows)
-      const tsv = data.tsv || buildTSV(data);
-      tsvOut.textContent  = tsv;
+  if (btnClear) {
+    btnClear.addEventListener("click", () => {
+      imageDataUrl = null;
+      showPreview(null);
+      if (tsvOut)  tsvOut.textContent = "";
+      if (jsonOut) jsonOut.textContent = "";
+      setStatus("Ready");
+      setDisabled(btnUpload, true);
+      setDisabled(btnClear, true);
+      setDisabled(btnCopyTSV, true);
+      setDisabled(btnCopyJSON, true);
+    });
+  }
 
-      // Render JSON nicely underneath
-      jsonOut.textContent = JSON.stringify({ week: data.week, matchups: data.matchups }, null, 2);
+  if (btnCopyTSV)  btnCopyTSV.addEventListener("click", () => copy(tsvOut?.textContent || ""));
+  if (btnCopyJSON) btnCopyJSON.addEventListener("click", () => copy(jsonOut?.textContent || ""));
 
-      setStatus("Done");
-      enable(btnCopyTSV, true);
-      enable(btnCopyJSON, true);
-    } catch (err) {
-      tsvOut.textContent  = "";
-      jsonOut.textContent = JSON.stringify({ error: String(err) }, null, 2);
-      setStatus("Error");
-    } finally {
-      enable(btnUpload, true);
-    }
-  });
-
-  btnClear.addEventListener("click", () => {
-    imageDataUrl = null;
-    showPreview(null);
-    tsvOut.textContent = "";
-    jsonOut.textContent = "";
-    setStatus("Ready");
-    enable(btnUpload, false);
-    enable(btnClear, false);
-  });
-
-  btnCopyTSV.addEventListener("click", () => copy(tsvOut.textContent));
-  btnCopyJSON.addEventListener("click", () => copy(jsonOut.textContent));
-
-  // init
+  // Init
   setStatus("Ready");
-  enable(btnUpload, false);
-  enable(btnClear,  false);
-  enable(btnCopyTSV,  false);
-  enable(btnCopyJSON, false);
+  setDisabled(btnUpload, true);
+  setDisabled(btnClear, true);
+  setDisabled(btnCopyTSV, true);
+  setDisabled(btnCopyJSON, true);
 })();

@@ -1,205 +1,108 @@
-/* public/ui.js
-   Frontend for Matchup Parser
-   - Drag/drop or pick a screenshot
-   - Sends week + image to /api/parse-matchups
-   - Shows JSON result
-   - "Copy TSV" copies tab-delimited pairs exactly like the user's sample
-*/
+// /api/parse-matchups.js
+const OpenAI = require("openai");
 
-(() => {
-  // ---- DOM ----
-  const weekInput = document.getElementById("weekInput");
-  const drop = document.getElementById("drop");
-  const fileInput = document.getElementById("file");
+module.exports = async (req, res) => {
+  const requestId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
-  const btnUpload = document.getElementById("btnUpload");
-  const btnClear = document.getElementById("btnClear");
-  const btnCopyJson = document.getElementById("btnCopyJson");
-  const btnCopyTSV = document.getElementById("btnCopyTSV");
+  const bad = (status, msg, extra = {}) =>
+    res.status(status).json({ error: msg, requestId, ...extra });
 
-  const output = document.getElementById("output");
-  const statusEl = document.getElementById("status");
-  const tableWrap = document.getElementById("tableWrap");
-  const previewWrap = document.getElementById("previewWrap");
-  const previewImg = document.getElementById("preview");
-
-  // ---- State ----
-  let imageDataUrl = null;
-  let lastJson = null;
-  let lastTSV = "";
-
-  // ---- Helpers ----
-  const setStatus = (text) => (statusEl.textContent = text);
-  const enable = (el, v) => (el.disabled = !v);
-
-  function bytesToDataUrl(file) {
-    return new Promise((resolve, reject) => {
-      const fr = new FileReader();
-      fr.onload = () => resolve(fr.result);
-      fr.onerror = reject;
-      fr.readAsDataURL(file);
-    });
-  }
-
-  function clearUI() {
-    imageDataUrl = null;
-    lastJson = null;
-    lastTSV = "";
-    fileInput.value = "";
-    previewWrap.style.display = "none";
-    previewImg.src = "";
-    output.textContent = "";
-    tableWrap.innerHTML = "";
-    setStatus("Ready");
-    enable(btnUpload, false);
-    enable(btnClear, false);
-    enable(btnCopyJson, false);
-    enable(btnCopyTSV, false);
-  }
-
-  // Format scores as shown in the screenshots (two decimals)
-  const fmt = (n) => {
-    if (typeof n === "number" && Number.isFinite(n)) return n.toFixed(2);
-    const num = Number(n);
-    return Number.isFinite(num) ? num.toFixed(2) : String(n);
-  };
-
-  // === TSV formatter: EXACTLY like the sample ===
-  // TeamA<TAB>Score
-  // TeamB<TAB>Score
-  //
-  // (blank line between matchups)
-  function toTSV(matchups) {
-    if (!Array.isArray(matchups)) return "";
-    const blocks = matchups.map((m) => {
-      const a = `${m.homeTeam}\t${fmt(m.homeScore)}`;
-      const b = `${m.awayTeam}\t${fmt(m.awayScore)}`;
-      return `${a}\n${b}`;
-    });
-    return blocks.join("\n\n");
-  }
-
-  // Optional mini table to eyeball results
-  function renderTable(matchups) {
-    if (!Array.isArray(matchups) || matchups.length === 0) {
-      tableWrap.innerHTML = "";
-      return;
+  try {
+    if (req.method !== "POST") {
+      return bad(405, "Method not allowed");
     }
-    const rows = matchups
-      .map(
-        (m) => `
-      <tr>
-        <td>${m.homeTeam}</td><td style="text-align:right">${fmt(m.homeScore)}</td>
-        <td style="padding:0 10px">vs</td>
-        <td>${m.awayTeam}</td><td style="text-align:right">${fmt(m.awayScore)}</td>
-      </tr>`
-      )
-      .join("");
-    tableWrap.innerHTML = `
-      <div style="margin-top:8px;font-size:12px;color:#9aa4ad">Preview</div>
-      <table style="width:100%;border-collapse:collapse;font-size:14px">
-        <tbody>${rows}</tbody>
-      </table>`;
-  }
 
-  // ---- Drag & Drop ----
-  drop.addEventListener("dragover", (e) => {
-    e.preventDefault();
-    drop.classList.add("dragover");
-  });
-  drop.addEventListener("dragleave", () => drop.classList.remove("dragover"));
-  drop.addEventListener("drop", async (e) => {
-    e.preventDefault();
-    drop.classList.remove("dragover");
-    const f = e.dataTransfer.files?.[0];
-    if (f) await handleFile(f);
-  });
-  drop.addEventListener("click", () => fileInput.click());
-  fileInput.addEventListener("change", async (e) => {
-    const f = e.target.files?.[0];
-    if (f) await handleFile(f);
-  });
+    if (!process.env.OPENAI_API_KEY) {
+      return bad(500, "Missing OPENAI_API_KEY");
+    }
 
-  async function handleFile(file) {
-    setStatus("Loading image…");
-    imageDataUrl = await bytesToDataUrl(file);
-    previewImg.src = imageDataUrl;
-    previewWrap.style.display = "block";
-    setStatus("Image ready");
-    enable(btnUpload, true);
-    enable(btnClear, true);
-  }
-
-  // ---- Upload & parse ----
-  btnUpload.addEventListener("click", async () => {
-    if (!imageDataUrl) return;
-    setStatus("Calling API…");
-    enable(btnUpload, false);
-
+    let body;
     try {
-      const res = await fetch("/api/parse-matchups", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          week: (weekInput.value || "").trim(),
-          imageDataUrl, // base64 data URL
-        }),
-      });
-
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error(data?.error || `HTTP ${res.status}`);
-      }
-
-      lastJson = data;
-      output.textContent = JSON.stringify(data, null, 2);
-
-      // Build TSV from the returned matchups, if present
-      if (data && Array.isArray(data.matchups)) {
-        lastTSV = toTSV(data.matchups);
-        renderTable(data.matchups);
-        enable(btnCopyTSV, true);
-      } else {
-        lastTSV = "";
-        renderTable([]);
-        enable(btnCopyTSV, false);
-      }
-
-      enable(btnCopyJson, true);
-      setStatus("Done");
-    } catch (err) {
-      output.textContent = JSON.stringify(
-        { error: String(err?.message || err) },
-        null,
-        2
-      );
-      lastJson = null;
-      lastTSV = "";
-      renderTable([]);
-      enable(btnCopyJson, false);
-      enable(btnCopyTSV, false);
-      setStatus("Error");
-    } finally {
-      enable(btnUpload, true);
+      body = req.body && typeof req.body === "object" ? req.body : JSON.parse(req.body || "{}");
+    } catch {
+      return bad(400, "Body must be JSON");
     }
-  });
 
-  // ---- Copy buttons ----
-  btnCopyJson.addEventListener("click", async () => {
-    const txt = output.textContent || "";
-    if (!txt) return;
-    await navigator.clipboard.writeText(txt);
-    setStatus("JSON copied");
-  });
+    const week = (body.week || "").toString().trim();
+    const imageDataUrl = (body.imageDataUrl || "").toString();
 
-  btnCopyTSV.addEventListener("click", async () => {
-    if (!lastTSV) return;
-    await navigator.clipboard.writeText(lastTSV);
-    setStatus("TSV copied");
-  });
+    if (!imageDataUrl.startsWith("data:image/")) {
+      return bad(400, "imageDataUrl must be a data URL (data:image/...)");
+    }
 
-  btnClear.addEventListener("click", clearUI);
+    const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-  // init
-  clearUI();
-})();
+    // Build the prompt
+    const systemPrompt =
+      "You are a strict JSON parser. Return only JSON with the shape: " +
+      '{"matchups":[{"homeTeam":string,"homeScore":number,"awayTeam":string,"awayScore":number,"winner":string,"diff":number}]} ' +
+      "No extra commentary or code fences.";
+
+    const userText =
+      "Parse the attached ESPN fantasy screenshot into JSON. " +
+      (week ? `The week for these matchups is ${week}. ` : "") +
+      "Use exact team names and two-decimal scores. Winner is the higher score; diff is absolute difference to two decimals.";
+
+    // Chat Completions w/ image
+    const completion = await client.chat.completions.create({
+      model: "gpt-4o-mini",
+      temperature: 0,
+      messages: [
+        { role: "system", content: systemPrompt },
+        {
+          role: "user",
+          content: [
+            { type: "text", text: userText },
+            { type: "image_url", image_url: { url: imageDataUrl } },
+          ],
+        },
+      ],
+    });
+
+    const raw = completion?.choices?.[0]?.message?.content || "";
+    if (!raw) {
+      return bad(502, "OpenAI returned no content");
+    }
+
+    // Extract raw JSON (strip ```json fences if present)
+    const jsonText = (() => {
+      const fence = raw.match(/```json\s*([\s\S]*?)```/i);
+      if (fence) return fence[1].trim();
+      // otherwise assume whole content is JSON
+      return raw.trim();
+    })();
+
+    let parsed;
+    try {
+      parsed = JSON.parse(jsonText);
+    } catch (e) {
+      return bad(422, "Parser did not return expected JSON.", { raw });
+    }
+
+    // Basic validation
+    if (!parsed || !Array.isArray(parsed.matchups)) {
+      return bad(422, "JSON missing matchups array.", { raw: jsonText });
+    }
+
+    // Normalize numbers
+    parsed.matchups = parsed.matchups.map((m) => ({
+      homeTeam: String(m.homeTeam || "").trim(),
+      homeScore: Number(m.homeScore),
+      awayTeam: String(m.awayTeam || "").trim(),
+      awayScore: Number(m.awayScore),
+      winner: String(m.winner || "").trim(),
+      diff: Number(m.diff),
+    }));
+
+    return res.status(200).json({
+      week: week || null,
+      matchups: parsed.matchups,
+      requestId,
+    });
+  } catch (err) {
+    // Surface a clean JSON error no matter what
+    return res
+      .status(500)
+      .json({ error: "A server error has occurred", requestId, detail: String(err && err.message || err) });
+  }
+};

@@ -1,133 +1,67 @@
-// api/parse-matchups.js
-const fs = require("fs");
-const multiparty = require("multiparty");
 const OpenAI = require("openai");
 
-function parseForm(req) {
+function readJsonBody(req) {
   return new Promise((resolve, reject) => {
-    const form = new multiparty.Form();
-    form.parse(req, (err, fields, files) => (err ? reject(err) : resolve({ fields, files })));
+    let raw = "";
+    req.on("data", (c) => (raw += c));
+    req.on("end", () => {
+      try { resolve(JSON.parse(raw || "{}")); }
+      catch (e) { reject(e); }
+    });
+    req.on("error", reject);
   });
-}
-
-function readFileB64(file) {
-  const buf = fs.readFileSync(file.path);
-  const ct = file.headers?.["content-type"] || "image/png";
-  return { b64: buf.toString("base64"), mime: ct };
-}
-
-function extractJsonBlock(s) {
-  const m = s.match(/\{[\s\S]*\}$/m) || s.match(/\{[\s\S]*\}/m);
-  return m ? m[0] : s;
-}
-
-async function callOpenAI(b64, mime) {
-  const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-
-  // Quick feature test – if this throws, your openai package is too old.
-  if (!client.responses || !client.responses.create) {
-    throw new Error("OpenAI SDK version doesn’t support responses.create – update 'openai' to ^4.58.0");
-  }
-
-  const prompt = `
-Return STRICT JSON ONLY:
-
-{
-  "week": number | null,
-  "matchups": [
-    {
-      "homeTeam": string,
-      "homeScore": number,
-      "awayTeam": string,
-      "awayScore": number,
-      "winner": string,
-      "diff": number
-    }
-  ]
-}
-
-Rules:
-- Use the bold main scores (ignore projections/smaller numbers).
-- Preserve team names exactly (blue text).
-- diff = |homeScore - awayScore| round to 2 decimals.
-- If the header shows "Week N", set week = N; else null.
-`;
-
-  const input = [
-    {
-      role: "user",
-      content: [
-        { type: "input_text", text: prompt },
-        { type: "input_image", image_url: `data:${mime};base64,${b64}` }
-      ]
-    }
-  ];
-
-  const resp = await client.responses.create({
-    model: process.env.OPENAI_MODEL || "gpt-5-mini",
-    temperature: 0.1,
-    input
-  });
-
-  const raw = resp.output_text || "";
-  const json = extractJsonBlock(raw);
-  let data;
-  try {
-    data = JSON.parse(json);
-  } catch {
-    throw new Error("Model did not return valid JSON");
-  }
-
-  if (!Array.isArray(data.matchups)) data.matchups = [];
-
-  for (const m of data.matchups) {
-    m.homeScore = Number(m.homeScore);
-    m.awayScore = Number(m.awayScore);
-    if (!Number.isFinite(m.homeScore) || !Number.isFinite(m.awayScore)) {
-      throw new Error("Non-numeric score in model result");
-    }
-    const diff = Math.abs(m.homeScore - m.awayScore);
-    m.diff = Number(diff.toFixed(2));
-    if (!m.winner) m.winner = m.homeScore >= m.awayScore ? m.homeTeam : m.awayTeam;
-  }
-
-  const wk = data.week == null ? null : Number(data.week);
-  data.week = Number.isFinite(wk) ? wk : null;
-
-  return data;
 }
 
 module.exports = async (req, res) => {
-  if (req.method !== "POST") return res.status(405).json({ error: "Use POST" });
-
-  if (!process.env.OPENAI_API_KEY) {
-    return res.status(500).json({ error: "Missing OPENAI_API_KEY in environment" });
-  }
-
   try {
-    const { fields, files } = await parseForm(req);
+    if (req.method !== "POST") {
+      res.status(405).json({ error: "Use POST" });
+      return;
+    }
 
-    const manualWeekRaw = fields?.week?.[0] ?? null;
-    const manualWeek =
-      manualWeekRaw != null && String(manualWeekRaw).trim() !== ""
-        ? Number(manualWeekRaw)
-        : null;
+    const { imageDataUrl, week } = await readJsonBody(req);
+    if (!imageDataUrl) {
+      res.status(400).json({ error: "Missing imageDataUrl" });
+      return;
+    }
 
-    const file = files?.file?.[0];
-    if (!file) return res.status(400).json({ error: 'No file uploaded (field "file")' });
+    const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    if (!client.apiKey) {
+      res.status(500).json({ error: "OPENAI_API_KEY missing" });
+      return;
+    }
 
-    const { b64, mime } = readFileB64(file);
-    const ai = await callOpenAI(b64, mime);
+    const system = [
+      "You receive a screenshot of fantasy football matchups.",
+      "Extract an array 'matchups'. For each row extract:",
+      "homeTeam, homeScore (number), awayTeam, awayScore (number), winner (team name), diff (abs(homeScore-awayScore) with 2 decimals).",
+      "Return ONLY valid JSON. If a team name is OCR'd slightly wrong, fix common mistakes (capitalize I vs |, etc.)."
+    ].join(" ");
 
-    return res.status(200).json({
-      week: manualWeek ?? ai.week ?? null,
-      matchups: ai.matchups
+    const user = [
+      { type: "text", text: "Parse the screenshot. Return JSON with a top-level 'matchups' array." },
+      { type: "input_image", image_url: { url: imageDataUrl } }
+    ];
+
+    const completion = await client.chat.completions.create({
+      model: "gpt-4o-mini",
+      response_format: { type: "json_object" },
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: user }
+      ],
+      temperature: 0.2
     });
+
+    const content = completion.choices?.[0]?.message?.content || "{}";
+    let parsed = {};
+    try { parsed = JSON.parse(content); } catch { parsed = { matchups: [] }; }
+    if (week != null) parsed.week = Number(week);
+
+    res.status(200).json(parsed);
   } catch (err) {
-    console.error("parse-matchups error:", err);
-    return res.status(500).json({
-      error: String(err?.message || err || "Server error"),
-      code: "FUNCTION_INVOCATION_FAILED"
+    res.status(500).json({
+      error: String(err && err.message ? err.message : err)
     });
   }
 };

@@ -1,43 +1,75 @@
 /* public/ui.js */
 (() => {
-  const weekInput = document.getElementById("weekInput");
-  const drop = document.getElementById("drop");
-  const fileInput = document.getElementById("file");
-
-  const btnUpload = document.getElementById("btnUpload");
-  const btnClear = document.getElementById("btnClear");
+  const weekInput   = document.getElementById("weekInput");
+  const drop        = document.getElementById("drop");
+  const fileInput   = document.getElementById("file");
+  const btnUpload   = document.getElementById("btnUpload");
+  const btnClear    = document.getElementById("btnClear");
   const btnCopyJson = document.getElementById("btnCopyJson");
-  const btnCopyTSV = document.getElementById("btnCopyTSV");
-
-  const output = document.getElementById("output");
-  const statusEl = document.getElementById("status");
-  const tableWrap = document.getElementById("tableWrap");
+  const btnCopyTSV  = document.getElementById("btnCopyTSV");
+  const output      = document.getElementById("output");
+  const statusEl    = document.getElementById("status");
+  const tableWrap   = document.getElementById("tableWrap");
   const previewWrap = document.getElementById("previewWrap");
-  const previewImg = document.getElementById("preview");
+  const previewImg  = document.getElementById("preview");
+
+  // Safe helpers
+  const setStatus = (t) => { if (statusEl) statusEl.textContent = t; };
+  const setOutput = (txt) => { if (output) output.textContent = txt; };
+  const setTable  = (html) => { if (tableWrap) tableWrap.innerHTML = html; };
+  const showPreview = (url) => {
+    if (previewImg && previewWrap) {
+      previewImg.src = url;
+      previewWrap.style.display = url ? "block" : "none";
+    }
+  };
+  const enable = (el, v) => el && (el.disabled = !v);
 
   let imageDataUrl = null;
   let lastTSV = "";
 
-  const setStatus = (t) => (statusEl.textContent = t);
-  const enable = (el, v) => (el.disabled = !v);
+  const fmt = (n) => {
+    const v = Number(n);
+    return Number.isFinite(v) ? v.toFixed(2) : String(n);
+  };
 
-  function bytesToDataUrl(file) {
-    return new Promise((resolve, reject) => {
-      const fr = new FileReader();
-      fr.onload = () => resolve(fr.result);
-      fr.onerror = reject;
-      fr.readAsDataURL(file);
-    });
-  }
+  const toTSV = (matchups) => {
+    if (!Array.isArray(matchups)) return "";
+    return matchups.map(m => `${m.homeTeam}\t${fmt(m.homeScore)}\n${m.awayTeam}\t${fmt(m.awayScore)}`).join("\n\n");
+  };
+
+  const renderTable = (matchups) => {
+    if (!tableWrap) return; // guard
+    if (!Array.isArray(matchups) || !matchups.length) {
+      setTable("");
+      return;
+    }
+    const rows = matchups.map(m => `
+      <tr>
+        <td>${m.homeTeam}</td><td>${fmt(m.homeScore)}</td>
+        <td style="padding:0 10px;text-align:center">vs</td>
+        <td>${m.awayTeam}</td><td>${fmt(m.awayScore)}</td>
+      </tr>`).join("");
+    setTable(`
+      <div class="muted" style="margin-bottom:6px">Preview</div>
+      <table><tbody>${rows}</tbody></table>
+    `);
+  };
+
+  const bytesToDataUrl = (file) => new Promise((resolve, reject) => {
+    const fr = new FileReader();
+    fr.onload = () => resolve(fr.result);
+    fr.onerror = reject;
+    fr.readAsDataURL(file);
+  });
 
   function clearUI() {
     imageDataUrl = null;
     lastTSV = "";
-    fileInput.value = "";
-    previewWrap.style.display = "none";
-    previewImg.src = "";
-    output.textContent = "";
-    tableWrap.innerHTML = "";
+    if (fileInput) fileInput.value = "";
+    setOutput("");
+    setTable("");
+    showPreview("");
     setStatus("Ready");
     enable(btnUpload, false);
     enable(btnClear, false);
@@ -45,159 +77,119 @@
     enable(btnCopyTSV, false);
   }
 
-  const fmt = (n) => {
-    if (typeof n === "number" && Number.isFinite(n)) return n.toFixed(2);
-    const v = Number(n);
-    return Number.isFinite(v) ? v.toFixed(2) : String(n);
-    };
-
-  function toTSV(matchups) {
-    if (!Array.isArray(matchups)) return "";
-    const blocks = matchups.map((m) => {
-      const a = `${m.homeTeam}\t${fmt(m.homeScore)}`;
-      const b = `${m.awayTeam}\t${fmt(m.awayScore)}`;
-      return `${a}\n${b}`;
-    });
-    return blocks.join("\n\n");
-  }
-
-  function renderTable(matchups) {
-    if (!Array.isArray(matchups) || matchups.length === 0) {
-      tableWrap.innerHTML = "";
-      return;
+  async function handleFile(file) {
+    setStatus("Loading image…");
+    try {
+      imageDataUrl = await bytesToDataUrl(file);
+      showPreview(imageDataUrl);
+      setStatus("Image ready");
+      enable(btnUpload, true);
+      enable(btnClear, true);
+    } catch (e) {
+      setStatus("Failed to read image");
     }
-    const rows = matchups
-      .map(
-        (m) => `
-      <tr>
-        <td>${m.homeTeam}</td><td style="text-align:right">${fmt(m.homeScore)}</td>
-        <td style="padding:0 10px">vs</td>
-        <td>${m.awayTeam}</td><td style="text-align:right">${fmt(m.awayScore)}</td>
-      </tr>`
-      )
-      .join("");
-    tableWrap.innerHTML = `
-      <div style="margin-top:8px;font-size:12px;color:#9aa4ad">Preview</div>
-      <table style="width:100%;border-collapse:collapse;font-size:14px">
-        <tbody>${rows}</tbody>
-      </table>`;
   }
 
-  // ---- Drag & drop ----
-  drop.addEventListener("dragover", (e) => {
-    e.preventDefault();
-    drop.classList.add("dragover");
-  });
-  drop.addEventListener("dragleave", () => drop.classList.remove("dragover"));
-  drop.addEventListener("drop", async (e) => {
-    e.preventDefault();
-    drop.classList.remove("dragover");
-    const f = e.dataTransfer.files?.[0];
-    if (f) await handleFile(f);
-  });
-  drop.addEventListener("click", () => fileInput.click());
-  fileInput.addEventListener("change", async (e) => {
-    const f = e.target.files?.[0];
-    if (f) await handleFile(f);
-  });
+  // Drag & drop
+  if (drop) {
+    drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("dragover"); });
+    drop.addEventListener("dragleave", () => drop.classList.remove("dragover"));
+    drop.addEventListener("drop", async (e) => {
+      e.preventDefault(); drop.classList.remove("dragover");
+      const f = e.dataTransfer?.files?.[0]; if (f) await handleFile(f);
+    });
+    drop.addEventListener("click", () => fileInput && fileInput.click());
+  }
 
-  // ---- Paste support (Ctrl/Cmd+V) ----
-  async function handlePaste(e) {
-    if (!e.clipboardData) return;
-    for (const item of e.clipboardData.items) {
-      if (item.type.startsWith("image/")) {
-        const file = item.getAsFile();
-        if (file) {
+  if (fileInput) {
+    fileInput.addEventListener("change", async (e) => {
+      const f = e.target.files?.[0]; if (f) await handleFile(f);
+    });
+  }
+
+  // Paste support
+  window.addEventListener("paste", async (e) => {
+    const items = e.clipboardData?.items || [];
+    for (const it of items) {
+      if (it.type.startsWith("image/")) {
+        const f = it.getAsFile();
+        if (f) {
           e.preventDefault();
-          await handleFile(file);
-          return;
+          await handleFile(f);
+          break;
         }
       }
     }
-  }
-  window.addEventListener("paste", handlePaste);
+  });
 
-  async function handleFile(file) {
-    setStatus("Loading image…");
-    imageDataUrl = await bytesToDataUrl(file);
-    previewImg.src = imageDataUrl;
-    previewWrap.style.display = "block";
-    setStatus("Image ready");
-    enable(btnUpload, true);
-    enable(btnClear, true);
-  }
+  // Upload
+  if (btnUpload) {
+    btnUpload.addEventListener("click", async () => {
+      if (!imageDataUrl) return;
+      setStatus("Calling API…");
+      enable(btnUpload, false);
 
-  // ---- Upload & parse ----
-  btnUpload.addEventListener("click", async () => {
-    if (!imageDataUrl) return;
-    setStatus("Calling API…");
-    enable(btnUpload, false);
+      try {
+        const res = await fetch("/api/parse-matchups", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            week: (weekInput?.value || "").trim(),
+            imageDataUrl
+          }),
+        });
 
-    try {
-      const res = await fetch("/api/parse-matchups", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          week: (weekInput.value || "").trim(),
-          imageDataUrl,
-        }),
-      });
+        const contentType = (res.headers.get("content-type") || "").toLowerCase();
+        let payload;
+        if (contentType.includes("application/json")) {
+          payload = await res.json();
+        } else {
+          const txt = await res.text();
+          if (!res.ok) throw new Error(txt || `HTTP ${res.status}`);
+          payload = JSON.parse(txt);
+        }
 
-      const ctype = (res.headers.get("content-type") || "").toLowerCase();
-      let payload;
-      if (ctype.includes("application/json")) {
-        payload = await res.json();
-      } else {
-        const txt = await res.text();
-        if (!res.ok) throw new Error(txt || `HTTP ${res.status}`);
-        try { payload = JSON.parse(txt); } catch { throw new Error(txt); }
-      }
+        if (!res.ok) throw new Error(payload?.error || `HTTP ${res.status}`);
 
-      if (!res.ok) {
-        throw new Error(payload?.error || `HTTP ${res.status}`);
-      }
+        setOutput(JSON.stringify(payload, null, 2));
+        enable(btnCopyJson, true);
 
-      output.textContent = JSON.stringify(payload, null, 2);
-      enable(btnCopyJson, true);
+        if (Array.isArray(payload.matchups)) {
+          lastTSV = toTSV(payload.matchups);
+          renderTable(payload.matchups);
+          enable(btnCopyTSV, true);
+        } else {
+          lastTSV = "";
+          renderTable([]);
+          enable(btnCopyTSV, false);
+        }
 
-      if (payload && Array.isArray(payload.matchups)) {
-        lastTSV = toTSV(payload.matchups);
-        renderTable(payload.matchups);
-        enable(btnCopyTSV, true);
-      } else {
+        setStatus("Done");
+      } catch (err) {
+        setOutput(JSON.stringify({ error: String(err?.message || err) }, null, 2));
         lastTSV = "";
         renderTable([]);
+        enable(btnCopyJson, true);
         enable(btnCopyTSV, false);
+        setStatus("Error");
+      } finally {
+        enable(btnUpload, true);
       }
+    });
+  }
 
-      setStatus("Done");
-    } catch (err) {
-      output.textContent = JSON.stringify({ error: String(err?.message || err) }, null, 2);
-      lastTSV = "";
-      renderTable([]);
-      enable(btnCopyJson, true);
-      enable(btnCopyTSV, false);
-      setStatus("Error");
-    } finally {
-      enable(btnUpload, true);
-    }
-  });
+  if (btnCopyJson) {
+    btnCopyJson.addEventListener("click", async () => {
+      const txt = output?.textContent || "";
+      if (txt) { await navigator.clipboard.writeText(txt); setStatus("JSON copied"); }
+    });
+  }
+  if (btnCopyTSV) {
+    btnCopyTSV.addEventListener("click", async () => {
+      if (lastTSV) { await navigator.clipboard.writeText(lastTSV); setStatus("TSV copied"); }
+    });
+  }
+  if (btnClear) btnClear.addEventListener("click", clearUI);
 
-  btnCopyJson.addEventListener("click", async () => {
-    const txt = output.textContent || "";
-    if (txt) {
-      await navigator.clipboard.writeText(txt);
-      setStatus("JSON copied");
-    }
-  });
-
-  btnCopyTSV.addEventListener("click", async () => {
-    if (lastTSV) {
-      await navigator.clipboard.writeText(lastTSV);
-      setStatus("TSV copied");
-    }
-  });
-
-  btnClear.addEventListener("click", clearUI);
   clearUI();
 })();

@@ -1,12 +1,5 @@
-/* public/ui.js
-   Frontend for Matchup Parser
-   - Robust fetch: handles JSON or text/HTML error bodies
-   - Shows real server error message instead of JSON parse error
-   - Copy JSON / Copy TSV (tab + blank line between matchups)
-*/
-
+/* public/ui.js */
 (() => {
-  // ---- DOM ----
   const weekInput = document.getElementById("weekInput");
   const drop = document.getElementById("drop");
   const fileInput = document.getElementById("file");
@@ -22,12 +15,10 @@
   const previewWrap = document.getElementById("previewWrap");
   const previewImg = document.getElementById("preview");
 
-  // ---- State ----
   let imageDataUrl = null;
   let lastTSV = "";
 
-  // ---- Helpers ----
-  const setStatus = (text) => (statusEl.textContent = text);
+  const setStatus = (t) => (statusEl.textContent = t);
   const enable = (el, v) => (el.disabled = !v);
 
   function bytesToDataUrl(file) {
@@ -56,11 +47,10 @@
 
   const fmt = (n) => {
     if (typeof n === "number" && Number.isFinite(n)) return n.toFixed(2);
-    const num = Number(n);
-    return Number.isFinite(num) ? num.toFixed(2) : String(n);
-  };
+    const v = Number(n);
+    return Number.isFinite(v) ? v.toFixed(2) : String(n);
+    };
 
-  // TSV exactly like the sample: Team<TAB>Score, blank line between matchups
   function toTSV(matchups) {
     if (!Array.isArray(matchups)) return "";
     const blocks = matchups.map((m) => {
@@ -93,7 +83,7 @@
       </table>`;
   }
 
-  // ---- Drag & Drop ----
+  // ---- Drag & drop ----
   drop.addEventListener("dragover", (e) => {
     e.preventDefault();
     drop.classList.add("dragover");
@@ -110,6 +100,22 @@
     const f = e.target.files?.[0];
     if (f) await handleFile(f);
   });
+
+  // ---- Paste support (Ctrl/Cmd+V) ----
+  async function handlePaste(e) {
+    if (!e.clipboardData) return;
+    for (const item of e.clipboardData.items) {
+      if (item.type.startsWith("image/")) {
+        const file = item.getAsFile();
+        if (file) {
+          e.preventDefault();
+          await handleFile(file);
+          return;
+        }
+      }
+    }
+  }
+  window.addEventListener("paste", handlePaste);
 
   async function handleFile(file) {
     setStatus("Loading image…");
@@ -144,9 +150,7 @@
       } else {
         const txt = await res.text();
         if (!res.ok) throw new Error(txt || `HTTP ${res.status}`);
-        // best-effort: try to parse text as JSON if server sent it wrong
-        try { payload = JSON.parse(txt); }
-        catch { throw new Error(txt || "Non-JSON response"); }
+        try { payload = JSON.parse(txt); } catch { throw new Error(txt); }
       }
 
       if (!res.ok) {
@@ -168,15 +172,10 @@
 
       setStatus("Done");
     } catch (err) {
-      // Show the real error message (text or HTML) instead of a JSON SyntaxError
-      output.textContent = JSON.stringify(
-        { error: String(err?.message || err) },
-        null,
-        2
-      );
+      output.textContent = JSON.stringify({ error: String(err?.message || err) }, null, 2);
       lastTSV = "";
       renderTable([]);
-      enable(btnCopyJson, true);   // allow copying the shown error
+      enable(btnCopyJson, true);
       enable(btnCopyTSV, false);
       setStatus("Error");
     } finally {
@@ -184,22 +183,21 @@
     }
   });
 
-  // ---- Copy buttons ----
   btnCopyJson.addEventListener("click", async () => {
     const txt = output.textContent || "";
-    if (!txt) return;
-    await navigator.clipboard.writeText(txt);
-    setStatus("JSON copied");
+    if (txt) {
+      await navigator.clipboard.writeText(txt);
+      setStatus("JSON copied");
+    }
   });
 
   btnCopyTSV.addEventListener("click", async () => {
-    if (!lastTSV) return;
-    await navigator.clipboard.writeText(lastTSV);
-    setStatus("TSV copied");
+    if (lastTSV) {
+      await navigator.clipboard.writeText(lastTSV);
+      setStatus("TSV copied");
+    }
   });
 
   btnClear.addEventListener("click", clearUI);
-
-  // init
   clearUI();
 })();

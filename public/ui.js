@@ -33,9 +33,11 @@
     return Number.isFinite(v) ? v.toFixed(2) : String(n);
   };
 
-  const toTSV = (matchups) => {
+  const toTSV = (matchups, week) => {
     if (!Array.isArray(matchups)) return "";
-    return matchups.map(m => `${m.homeTeam}\t${fmt(m.homeScore)}\n${m.awayTeam}\t${fmt(m.awayScore)}`).join("\n\n");
+    const header = `Week ${week || ""}\n\n`;
+    const body = matchups.map(m => `${m.homeTeam}\t${fmt(m.homeScore)}\n${m.awayTeam}\t${fmt(m.awayScore)}`).join("\n\n");
+    return header + body;
   };
 
   const renderTable = (matchups) => {
@@ -155,7 +157,7 @@
         enable(btnCopyJson, true);
 
         if (Array.isArray(payload.matchups)) {
-          lastTSV = toTSV(payload.matchups);
+          lastTSV = toTSV(payload.matchups, weekInput?.value || "");
           renderTable(payload.matchups);
           enable(btnCopyTSV, true);
         } else {

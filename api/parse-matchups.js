@@ -1,67 +1,29 @@
-const OpenAI = require("openai");
-
-function readJsonBody(req) {
-  return new Promise((resolve, reject) => {
-    let raw = "";
-    req.on("data", (c) => (raw += c));
-    req.on("end", () => {
-      try { resolve(JSON.parse(raw || "{}")); }
-      catch (e) { reject(e); }
-    });
-    req.on("error", reject);
-  });
-}
-
+// Keep this simple first so we confirm routing. We'll plug the full parser back in after ping/debug work.
 module.exports = async (req, res) => {
+  if (req.method !== "POST") {
+    res.status(405).json({ error: "Use POST" });
+    return;
+  }
+
+  // Accept either FormData (image) or JSON body from your UI; echo back to prove it’s wired.
   try {
-    if (req.method !== "POST") {
-      res.status(405).json({ error: "Use POST" });
-      return;
-    }
-
-    const { imageDataUrl, week } = await readJsonBody(req);
-    if (!imageDataUrl) {
-      res.status(400).json({ error: "Missing imageDataUrl" });
-      return;
-    }
-
-    const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-    if (!client.apiKey) {
-      res.status(500).json({ error: "OPENAI_API_KEY missing" });
-      return;
-    }
-
-    const system = [
-      "You receive a screenshot of fantasy football matchups.",
-      "Extract an array 'matchups'. For each row extract:",
-      "homeTeam, homeScore (number), awayTeam, awayScore (number), winner (team name), diff (abs(homeScore-awayScore) with 2 decimals).",
-      "Return ONLY valid JSON. If a team name is OCR'd slightly wrong, fix common mistakes (capitalize I vs |, etc.)."
-    ].join(" ");
-
-    const user = [
-      { type: "text", text: "Parse the screenshot. Return JSON with a top-level 'matchups' array." },
-      { type: "input_image", image_url: { url: imageDataUrl } }
-    ];
-
-    const completion = await client.chat.completions.create({
-      model: "gpt-4o-mini",
-      response_format: { type: "json_object" },
-      messages: [
-        { role: "system", content: system },
-        { role: "user", content: user }
-      ],
-      temperature: 0.2
+    let body = "";
+    await new Promise((resolve) => {
+      req.on("data", (c) => (body += c));
+      req.on("end", resolve);
     });
 
-    const content = completion.choices?.[0]?.message?.content || "{}";
-    let parsed = {};
-    try { parsed = JSON.parse(content); } catch { parsed = { matchups: [] }; }
-    if (week != null) parsed.week = Number(week);
+    // Try parse JSON (your UI sends JSON); if not JSON, just send a basic OK.
+    let json = {};
+    try { json = JSON.parse(body || "{}"); } catch (_) {}
 
-    res.status(200).json(parsed);
+    res.status(200).json({
+      ok: true,
+      route: "/api/parse-matchups",
+      receivedKeys: Object.keys(json),
+      note: "API route is working; next step is to re-enable the real parser."
+    });
   } catch (err) {
-    res.status(500).json({
-      error: String(err && err.message ? err.message : err)
-    });
+    res.status(500).json({ error: String(err) });
   }
 };

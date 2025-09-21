@@ -379,9 +379,20 @@
     const wavyRank = new Map(wavySorted.map((t,i)=>[t, i+1]));
 
     // Hybrid = average
-    const hybrid = new Map(teams.map(t => [t, ( (yahooRank.get(t)||0) + (wavyRank.get(t)||0) ) / 2 ]));
+    const hybrid = new Map(
+      teams.map(t => [
+        t,
+        ((yahooRank.get(t) || 0) + (wavyRank.get(t) || 0)) / 2,
+      ])
+    );
+    
+    // Sort by hybrid rank (asc). Break ties with Points For (desc).
+    const order = [...teams].sort((a, b) => {
+      const diff = hybrid.get(a) - hybrid.get(b);
+      if (Math.abs(diff) > 1e-9) return diff; // not tied
+      return (pfTotals.get(b) || 0) - (pfTotals.get(a) || 0);
+    });
 
-    const order = [...teams].sort((a,b) => hybrid.get(a) - hybrid.get(b));
 
     tbl.innerHTML = `
       <thead>

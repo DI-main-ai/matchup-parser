@@ -95,6 +95,51 @@ Rules:
       },
       raw: truncate(raw, 2000),
     });
+
+    import { kvSetJSON } from './_kv.js';
+
+    const PREFIX = 'mp:week:';
+    
+    async function saveToHistory(week, matchups) {
+      const now = new Date();
+      const payload = {
+        week: Number(week),
+        matchups,
+        savedAt: now.toISOString(),
+        savedAtLocal: now.toLocaleString('en-US', { timeZone: 'America/Chicago' }),
+      };
+      await kvSetJSON(`${PREFIX}${Number(week)}`, payload);
+      return payload;
+    }
+    
+    export async function POST(req) {
+      try {
+        const { imageDataUrl, hintWeek } = await req.json();
+    
+        // ... your existing OCR/vision parsing ...
+        // Must finish with:
+        //   const week = extractedWeek || hintWeek || 1;
+        //   const matchups = [ { homeTeam, homeScore, awayTeam, awayScore, winner, diff }, ... ];
+    
+        // ---------------------------
+        // Fake stub so file compiles; REPLACE with your real parser results:
+        const week = hintWeek || 1;
+        const matchups = []; // <-- fill from your parser
+        // ---------------------------
+    
+        // Save to KV
+        const saved = await saveToHistory(week, matchups);
+    
+        return new Response(JSON.stringify({ week, matchups, saved }), {
+          headers: { 'content-type': 'application/json' },
+        });
+      } catch (err) {
+        return new Response(JSON.stringify({ error: String(err.message || err) }), {
+          status: 500,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+    }
   } catch (err) {
     return res.status(500).json({
       error: String(err?.message || err),

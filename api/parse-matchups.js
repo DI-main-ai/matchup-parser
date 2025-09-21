@@ -1,102 +1,107 @@
 // /api/parse-matchups.js
-const { kvGet, kvSet } = require('./_kv');
-const OpenAI = require('openai');
+import OpenAI from "openai";
 
-function ctLabel(ts) {
+const client = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+});
+
+export default async function handler(req, res) {
+  if (req.method !== "POST") {
+    return res.status(405).json({ error: "Method not allowed" });
+  }
+
   try {
-    const d = new Date(ts);
-    return new Intl.DateTimeFormat('en-US', {
-      timeZone:'America/Chicago',
-      month:'2-digit', day:'2-digit',
-      hour:'2-digit', minute:'2-digit', hour12:true
-    }).format(d).replace(',', '');
-  } catch { return String(ts); }
-}
-
-module.exports = async (req, res) => {
-  try {
-    if (req.method !== 'POST') return res.status(405).json({ error: 'Use POST' });
-
-    const { imageDataUrl, hintWeek, previousId } = req.body || {};
-    if (!imageDataUrl || typeof imageDataUrl !== 'string') {
-      return res.status(400).json({ error: 'imageDataUrl required' });
+    const { imageDataUrl, hintWeek } = req.body || {};
+    if (!imageDataUrl || typeof imageDataUrl !== "string") {
+      return res.status(400).json({ error: "imageDataUrl (data URL) is required" });
     }
 
-    const hasKey = !!process.env.OPENAI_API_KEY;
-    if (!hasKey) return res.status(500).json({ error: 'OPENAI_API_KEY missing' });
-
-    // ---- Call OpenAI (gpt-4o-mini) to OCR & parse ----
-    const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-
+    // prompt: ask for strict JSON only
     const prompt = `
-You are given a fantasy football "Week X Matchups" screenshot.
-Extract EXACTLY this JSON (no code fences):
+You are given an ESPN fantasy "Matchups" screenshot. Extract structured data.
 
+Return **only** raw JSON, no backticks or markdown.
+Format:
 {
   "week": <number or null>,
   "matchups": [
-    {"homeTeam": "...", "homeScore": <number>, "awayTeam": "...", "awayScore": <number>, "winner": "...", "diff": <number>}
-    ...
-  ],
-  "meta": {"extractedWeek": <number or null>, "weekSource": "image" | "none"}
+    {
+      "homeTeam": "string",
+      "homeScore": number,
+      "awayTeam": "string",
+      "awayScore": number,
+      "winner": "string",
+      "diff": number
+    }
+  ]
 }
 
 Rules:
-- Scores must be numbers with 2 decimals.
-- winner = team with higher score.
-- diff = abs(homeScore - awayScore) with 2 decimals.
-- extractedWeek comes from the "Week N" heading in the screenshot if visible; else null.
-`;
+- "week": If visible (e.g., "Week 2" top-left with trophy icon), return that integer. If not visible, return null.
+- Scores: use the big top score for each team (not the small projected/secondary numbers).
+- "winner": the team name with the higher score.
+- "diff": absolute difference (homeScore - awayScore) in absolute value, as a number with up to 2 decimals (no string).
+- Team names must be exactly as shown in the UI.
+- If any row is ambiguous, skip it rather than guessing.
+    `.trim();
 
     const resp = await client.chat.completions.create({
-      model: 'gpt-4o-mini',
+      model: "gpt-4o-mini",
       messages: [
-        { role: 'system', content: 'You extract structured JSON from images.' },
+        { role: "system", content: "You extract strict JSON from images precisely." },
         {
-          role: 'user',
+          role: "user",
           content: [
-            { type: 'text', text: prompt.trim() },
-            { type: 'input_image', image_url: { url: imageDataUrl } }
-          ]
-        }
-      ]
-      // (no temperature; some models only accept default)
+            { type: "text", text: prompt },
+            // IMPORTANT: Use image_url (not input_image)
+            { type: "image_url", image_url: { url: imageDataUrl } },
+          ],
+        },
+      ],
+      // do NOT set temperature to 0.0 on this model; default is fine
+      // temperature: 1 is default; we omit it to avoid model-specific constraints
     });
 
-    const raw = resp.choices?.[0]?.message?.content?.trim() || '';
-    let parsed;
+    const raw = resp?.choices?.[0]?.message?.content || "";
+    const cleaned = raw
+      .trim()
+      .replace(/^```json\s*/i, "")
+      .replace(/^```\s*/i, "")
+      .replace(/```$/i, "")
+      .trim();
+
+    let data;
     try {
-      parsed = JSON.parse(raw);
-    } catch {
-      // If model wrapped in ```json fences, try to strip
-      const m = raw.match(/```json\s*([\s\S]*?)\s*```/i) || raw.match(/```\s*([\s\S]*?)\s*```/);
-      if (m) parsed = JSON.parse(m[1]);
-      else throw new Error('Parser did not return valid JSON.');
+      data = JSON.parse(cleaned);
+    } catch (e) {
+      return res.status(400).json({
+        error: "Parser did not return expected JSON.",
+        raw,
+      });
     }
 
-    const wkFromImage = (parsed.meta && parsed.meta.extractedWeek) ? parsed.meta.extractedWeek : null;
-    const weekFinal = hintWeek ?? parsed.week ?? wkFromImage ?? null;
+    // Normalize output
+    const matchups = Array.isArray(data.matchups) ? data.matchups : [];
+    const extractedWeek =
+      typeof data.week === "number" && Number.isFinite(data.week) ? data.week : null;
 
-    // prepare payload
-    const matchups = Array.isArray(parsed.matchups) ? parsed.matchups : [];
-    const out = { week: weekFinal, matchups, meta: { extractedWeek: wkFromImage, weekSource: wkFromImage ? 'image' : 'none' } };
+    // Decide final week for the response (UI will still show TSV separately)
+    const week = extractedWeek ?? (Number.isFinite(hintWeek) ? hintWeek : null);
 
-    // ---- Save to KV as a new version (keep last 5) ----
-    const id = String(Date.now());
-    const label = `W${weekFinal || '?'} • ${ctLabel(Date.now())}`;
-    const versionObj = { id, week: weekFinal, matchups, createdAt: Date.now(), label, meta: out.meta, previousId: previousId || null };
-
-    // list
-    const existingRaw = await kvGet('versions:list').catch(() => '[]');
-    const list = existingRaw ? JSON.parse(existingRaw) : [];
-    const updated = [versionObj, ...list].slice(0, 5);
-    await kvSet(`version:${id}`, JSON.stringify(versionObj));
-    await kvSet('versions:list', JSON.stringify(updated));
-
-    res.status(200).json(out);
-  } catch (e) {
-    console.error('parse-matchups', e);
-    // Always return JSON so the UI never sees HTML
-    res.status(500).json({ error: String(e.message || e) });
+    return res.status(200).json({
+      week,
+      matchups,
+      meta: {
+        extractedWeek,
+        weekSource: extractedWeek != null ? "image" : (hintWeek != null ? "manual" : "unknown"),
+        rawLength: raw.length,
+      },
+    });
+  } catch (err) {
+    console.error("parse-matchups error:", err);
+    // If OpenAI throws the exact error you saw, pass a helpful message back
+    return res.status(500).json({
+      error: String(err?.message || err),
+    });
   }
-};
+}

@@ -1,100 +1,144 @@
 // /api/parse-matchups.js
-import OpenAI from "openai";
+// Robust, no .length on undefined, and always returns helpful debug when parsing fails.
 
-const client = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+import OpenAI from "openai";
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
-    return res.status(405).json({ error: "Method not allowed" });
+    res.setHeader("Allow", "POST");
+    return res.status(405).json({ error: "Method Not Allowed" });
   }
 
   try {
     const { imageDataUrl, hintWeek } = req.body || {};
-    if (!imageDataUrl || typeof imageDataUrl !== "string") {
-      return res.status(400).json({ error: "imageDataUrl (data URL) is required" });
+
+    if (!imageDataUrl || typeof imageDataUrl !== "string" || !imageDataUrl.startsWith("data:image/")) {
+      return res.status(400).json({ error: "imageDataUrl must be a data URL (data:image/...)" });
     }
 
-    const prompt = `
-You are given an ESPN fantasy "Matchups" screenshot. Extract structured data.
+    // Extract base64 and make a blob URL for the image message.
+    // OpenAI chat.completions accepts `image_url` with base64 data URLs.
+    const imageUrl = imageDataUrl;
 
-Return **only** raw JSON, no backticks or markdown.
-Format:
+    const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+    const sys = `
+You extract fantasy football matchup results from a screenshot.
+Return ONLY valid JSON with this shape:
 {
-  "week": <number or null>,
   "matchups": [
-    {
-      "homeTeam": "string",
-      "homeScore": number,
-      "awayTeam": "string",
-      "awayScore": number,
-      "winner": "string",
-      "diff": number
-    }
+    {"homeTeam": "...", "homeScore": number, "awayTeam": "...", "awayScore": number, "winner": "...", "diff": number}
   ]
 }
-    `.trim();
+Rules:
+- No markdown fences. No commentary.
+- Scores must be numbers (use decimals as in the image). "diff" = abs(homeScore - awayScore) to 2 decimals.
+- Team names must match exactly as seen.
+`;
+
+    const userText = `Here is a matchup screenshot.${hintWeek ? ` (Manual week hint: ${hintWeek})` : ""}`;
 
     const resp = await client.chat.completions.create({
       model: "gpt-4o-mini",
+      temperature: 1, // (0 is not supported by this model)
       messages: [
-        { role: "system", content: "You extract strict JSON from images precisely." },
+        { role: "system", content: sys },
         {
           role: "user",
           content: [
-            { type: "text", text: prompt },
-            { type: "image_url", image_url: { url: imageDataUrl } },
+            { type: "text", text: userText },
+            { type: "image_url", image_url: { url: imageUrl } },
           ],
         },
       ],
     });
 
-    // Defensive: content might not exist
-    const raw = resp?.choices?.[0]?.message?.content;
-    if (!raw) {
-      return res.status(500).json({
+    // Get a safe "raw" string no matter what the SDK returns.
+    // Some SDKs may return content as a string; others may return an array of parts.
+    const choice = resp?.choices?.[0];
+    let raw = choice?.message?.content ?? "";
+
+    // If content is an array of parts, join only textual parts
+    if (Array.isArray(raw)) {
+      raw = raw
+        .map((p) => (typeof p === "string" ? p : p?.text || p?.content || ""))
+        .join("\n");
+    }
+    if (typeof raw !== "string") raw = String(raw || "");
+
+    if (!raw.trim()) {
+      return res.status(502).json({
         error: "No content returned from model",
-        debug: resp, // include the whole response to inspect
+        debug: resp,
       });
     }
 
-    const cleaned = raw
-      .trim()
-      .replace(/^```json\s*/i, "")
-      .replace(/^```\s*/i, "")
-      .replace(/```$/i, "")
-      .trim();
+    // Try to extract just the JSON blob from the response
+    const json = extractJson(raw);
 
-    let data;
-    try {
-      data = JSON.parse(cleaned);
-    } catch (e) {
-      return res.status(400).json({
+    if (!json || !Array.isArray(json.matchups)) {
+      return res.status(422).json({
         error: "Parser did not return expected JSON.",
-        raw,
+        raw: truncate(raw, 4000),
+        debug: resp,
       });
     }
 
-    const matchups = Array.isArray(data.matchups) ? data.matchups : [];
-    const extractedWeek =
-      typeof data.week === "number" && Number.isFinite(data.week) ? data.week : null;
-
-    const week = extractedWeek ?? (Number.isFinite(hintWeek) ? hintWeek : null);
-
+    // Final payload back to the UI
     return res.status(200).json({
-      week,
-      matchups,
+      week: hintWeek ?? null,
+      matchups: json.matchups,
       meta: {
-        extractedWeek,
-        weekSource: extractedWeek != null ? "image" : (hintWeek != null ? "manual" : "unknown"),
-        rawLength: typeof raw === "string" ? raw.length : 0,
+        weekSource: hintWeek ? "manual" : "unknown",
+        extractedWeek: null,
+        model: resp?.model || "gpt-4o-mini",
       },
+      raw: truncate(raw, 2000),
     });
   } catch (err) {
-    console.error("parse-matchups error:", err);
     return res.status(500).json({
       error: String(err?.message || err),
     });
   }
+}
+
+// ---- helpers ----
+
+// Find the first JSON object in a string (handles code fences gracefully).
+function extractJson(s) {
+  // If it contains fenced code ```json ... ```, prefer that
+  const fence = /```json\s*([\s\S]*?)```/i.exec(s) || /```\s*([\s\S]*?)```/i.exec(s);
+  if (fence && fence[1]) {
+    try {
+      return JSON.parse(cleanTrailingCommas(fence[1]));
+    } catch (_) {}
+  }
+  // Otherwise, try to find the first {...} block
+  const start = s.indexOf("{");
+  const end = s.lastIndexOf("}");
+  if (start !== -1 && end !== -1 && end > start) {
+    const candidate = s.slice(start, end + 1);
+    try {
+      return JSON.parse(cleanTrailingCommas(candidate));
+    } catch (_) {}
+  }
+  // Last resort: attempt a direct parse
+  try {
+    return JSON.parse(cleanTrailingCommas(s));
+  } catch (_) {
+    return null;
+  }
+}
+
+// Very light cleanup (helps with loose JSON commas some models emit)
+function cleanTrailingCommas(text) {
+  // Remove trailing commas before } or ]
+  return text
+    .replace(/,\s*}/g, "}")
+    .replace(/,\s*]/g, "]");
+}
+
+function truncate(str, n) {
+  if (typeof str !== "string") return "";
+  return str.length > n ? str.slice(0, n) + " …(truncated)" : str;
 }

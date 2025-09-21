@@ -1,6 +1,5 @@
 /* public/ui.js */
 (() => {
-  // -------- element refs --------
   const els = {
     week: document.getElementById('week'),
     drop: document.getElementById('drop'),
@@ -17,7 +16,6 @@
     apiHeader: document.getElementById('apiResponseHeader'),
   };
 
-  // -------- state helpers --------
   const setState = (txt) => els.state && (els.state.textContent = txt || '');
   const enableCopies = (on) => {
     [els.btnCopyTsv, els.btnCopyJson].forEach(b => b && (b.disabled = !on));
@@ -34,8 +32,6 @@
     const f = parseFloat(String(n).replace(/[^\d.-]/g, ''));
     return isFinite(f) ? f.toFixed(2) : String(n);
   };
-
-  // TSV: week\n\n(home\tscore\naway\tscore\n\n)*
   function buildTsv(week, matchups) {
     const lines = [String(week ?? ''), ''];
     for (const m of matchups) {
@@ -45,13 +41,11 @@
     }
     return lines.join('\n').trimEnd();
   }
-
   function extractWeekFromFilename(name) {
     if (!name) return null;
     const m = name.match(/(?:^|[\s_-])(week|wk|w)\s*([0-9]{1,2})(?=\D|$)/i);
     return m ? parseInt(m[2], 10) : null;
   }
-
   const fileToDataUrl = (file) => new Promise((resolve, reject) => {
     const fr = new FileReader();
     fr.onerror = reject;
@@ -59,7 +53,7 @@
     fr.readAsDataURL(file);
   });
 
-  // -------- History UI (injected) --------
+  // ---- History UI (injected) ----
   const hist = {};
   function injectHistoryUI() {
     if (hist.wrap) return;
@@ -96,7 +90,6 @@
     hist.btnRevert = btnRevert;
     hist.btnDelete = btnDelete;
 
-    select.addEventListener('change', () => {});
     btnRevert.addEventListener('click', onRevert);
     btnDelete.addEventListener('click', onDelete);
   }
@@ -104,24 +97,28 @@
   async function historyList() {
     try {
       const res = await fetch('/api/history/list');
-      if (!res.ok) throw new Error(await res.text());
-      return await res.json(); // { items:[{id,week,createdAt,label}] }
-    } catch {
-      return { items: [] };
-    }
+      const raw = await res.text();
+      let json; try { json = JSON.parse(raw); } catch { throw new Error(raw); }
+      return json;
+    } catch { return { items: [] }; }
   }
   async function historyGet(id) {
     const res = await fetch(`/api/history/get?id=${encodeURIComponent(id)}`);
-    if (!res.ok) throw new Error(await res.text());
-    return await res.json(); // { week, matchups }
+    const raw = await res.text();
+    let json; try { json = JSON.parse(raw); } catch { throw new Error(raw); }
+    return json;
   }
   async function historyUse(id) {
     const res = await fetch(`/api/history/use?id=${encodeURIComponent(id)}`, { method:'POST' });
-    if (!res.ok) throw new Error(await res.text());
+    const raw = await res.text();
+    let json; try { json = JSON.parse(raw); } catch { throw new Error(raw); }
+    return json;
   }
   async function historyDelete(id) {
     const res = await fetch(`/api/history/delete?id=${encodeURIComponent(id)}`, { method:'POST' });
-    if (!res.ok) throw new Error(await res.text());
+    const raw = await res.text();
+    let json; try { json = JSON.parse(raw); } catch { throw new Error(raw); }
+    return json;
   }
 
   function ctLabel(ts) {
@@ -134,7 +131,6 @@
       }).format(d).replace(',', '');
     } catch { return ts; }
   }
-
   async function refreshHistory() {
     injectHistoryUI();
     hist.select.innerHTML = '';
@@ -156,7 +152,6 @@
     }
     hist.select.disabled = false; hist.btnRevert.disabled = false; hist.btnDelete.disabled = false;
   }
-
   async function onRevert() {
     const id = hist.select?.value;
     if (!id) return;
@@ -179,7 +174,7 @@
     } catch (e) { renderError(e); }
   }
 
-  // -------- drag/drop/paste/file wiring --------
+  // ---- drag/drop/paste/file ----
   if (els.drop && els.file) {
     els.drop.addEventListener('click', () => els.file.click());
     ['dragenter','dragover'].forEach(ev => els.drop.addEventListener(ev, e => {
@@ -195,17 +190,14 @@
       if (file) await onFileChosen(file);
     });
   }
-
   window.addEventListener('paste', async (e) => {
     const item = Array.from(e.clipboardData?.items || []).find(i => i.type.startsWith('image/'));
     if (!item) return;
     const file = item.getAsFile();
     if (file) await onFileChosen(file, { fromPaste:true });
   });
-
   async function onFileChosen(file) {
     clearOutputs();
-    // filename week hint
     const fnameWeek = extractWeekFromFilename(file.name);
     if (fnameWeek && els.week) els.week.value = String(fnameWeek);
 
@@ -215,24 +207,23 @@
     if (els.thumbWrap) els.thumbWrap.style.display = 'block';
   }
 
-  // -------- call API & render --------
+  // ---- API call with robust parsing ----
   async function callParse({ imageDataUrl, hintWeek, previousId }) {
     const res = await fetch('/api/parse-matchups', {
       method:'POST',
       headers:{ 'content-type':'application/json' },
       body: JSON.stringify({ imageDataUrl, hintWeek, previousId })
     });
-    const json = await res.json();
-    if (!res.ok) throw new Error(json.error || res.statusText);
-    return json; // { week, matchups, meta }
+    const raw = await res.text();
+    let json; try { json = JSON.parse(raw); } catch { throw new Error(raw); }
+    if (!res.ok) throw new Error(json.error || raw || res.statusText);
+    return json;
   }
-
   function finalWeek(json, manual) {
     const fromFile = extractWeekFromFilename(els.file?.files?.[0]?.name || '');
     const fromImage = (json.meta?.weekSource === 'image' && json.meta?.extractedWeek) ? json.meta.extractedWeek : null;
     return fromFile ?? fromImage ?? (manual || null) ?? json.week ?? null;
   }
-
   function renderResult(week, matchups) {
     if (els.week) els.week.value = week ? String(week) : (els.week.value || '1');
     els.tsvOut.textContent = buildTsv(week, matchups);
@@ -267,7 +258,6 @@
       }
     });
   }
-
   if (els.btnClear) {
     els.btnClear.addEventListener('click', () => {
       if (els.file) els.file.value = '';
@@ -276,11 +266,9 @@
       clearOutputs();
     });
   }
-
   els.btnCopyTsv && els.btnCopyTsv.addEventListener('click', () => navigator.clipboard.writeText(els.tsvOut.textContent || ''));
   els.btnCopyJson && els.btnCopyJson.addEventListener('click', () => navigator.clipboard.writeText(els.jsonOut.textContent || ''));
 
-  // -------- boot --------
   (async () => {
     clearOutputs();
     injectHistoryUI();

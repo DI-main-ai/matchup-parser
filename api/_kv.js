@@ -1,29 +1,47 @@
-// /api/_kv.js - Upstash Redis REST helper (works with Vercel KV REST vars too)
-const BASE = process.env.KV_REST_API_URL || process.env.REDIS_URL || '';
-const TOKEN = process.env.KV_REST_API_TOKEN || process.env.KV_REST_API_READ_ONLY_TOKEN || process.env.REDIS_TOKEN || '';
+// Lightweight Upstash REST helper
+const { KV_REST_API_URL, KV_REST_API_TOKEN } = process.env;
 
-async function kvCommand(...command) {
-  if (!BASE || !TOKEN) throw new Error('KV credentials missing');
-  const res = await fetch(BASE, {
-    method: 'POST',
+if (!KV_REST_API_URL || !KV_REST_API_TOKEN) {
+  console.warn('⚠️ Missing KV_REST_API_URL or KV_REST_API_TOKEN env vars');
+}
+
+async function kvFetch(path, opts = {}) {
+  const res = await fetch(`${KV_REST_API_URL}${path}`, {
+    ...opts,
     headers: {
-      'authorization': `Bearer ${TOKEN}`,
-      'content-type': 'application/json',
+      Authorization: `Bearer ${KV_REST_API_TOKEN}`,
+      'Content-Type': 'application/json',
+      ...(opts.headers || {}),
     },
-    body: JSON.stringify({ command })
+    cache: 'no-store',
   });
-  const data = await res.json().catch(async () => ({ error: await res.text() }));
-  if (!res.ok) throw new Error(data?.error || res.statusText);
-  return data?.result;
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`KV error ${res.status}: ${text || res.statusText}`);
+  }
+  return res.json();
 }
 
-async function kvGet(key) {
-  const res = await kvCommand('GET', key);
-  return typeof res === 'string' ? res : (res ?? null);
+// Store JSON under a key
+export async function kvSetJSON(key, value) {
+  return kvFetch('/set', {
+    method: 'POST',
+    body: JSON.stringify({ key, value: JSON.stringify(value) }),
+  });
 }
-async function kvSet(key, val) {
-  return kvCommand('SET', key, typeof val === 'string' ? val : JSON.stringify(val));
-}
-async function kvDel(key) { return kvCommand('DEL', key); }
 
-module.exports = { kvGet, kvSet, kvDel };
+// Get JSON from a key
+export async function kvGetJSON(key) {
+  const out = await kvFetch(`/get/${encodeURIComponent(key)}`);
+  if (!out || out.result == null) return null;
+  try { return JSON.parse(out.result); } catch { return out.result; }
+}
+
+// List keys by prefix
+export async function kvKeys(prefix) {
+  const out = await kvFetch('/keys', {
+    method: 'POST',
+    body: JSON.stringify({ match: `${prefix}*`, count: 1000 }),
+  });
+  return out.result || [];
+}

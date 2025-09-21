@@ -1,6 +1,7 @@
 // /public/ui.js
 (() => {
   const els = {
+    // input + basic UI
     week: document.getElementById('week'),
     drop: document.getElementById('drop'),
     file: document.getElementById('file'),
@@ -9,10 +10,8 @@
     thumbWrap: document.getElementById('thumbWrap'),
     thumb: document.getElementById('thumb'),
     state: document.getElementById('state'),
-    tsvOut: document.getElementById('tsvOut'),
-    jsonOut: document.getElementById('jsonOut'),
-    btnCopyTsv: document.getElementById('btnCopyTsv'),
-    btnCopyJson: document.getElementById('btnCopyJson'),
+
+    // current-week display
     matchTable: document.getElementById('matchTable'),
 
     // league tables
@@ -21,16 +20,11 @@
     pfTable: document.getElementById('pfTable'),
     summaryTable: document.getElementById('summaryTable'),
 
-    // weeks list
+    // weeks/history
     weeksTbl: document.getElementById('weeksTable'),
   };
 
   const setState = (t) => els.state && (els.state.textContent = t || '');
-  const copy = (text) => { try { navigator.clipboard.writeText(text); } catch {} };
-  const enableCopies = (on) => {
-    if (els.btnCopyTsv) els.btnCopyTsv.disabled = !on;
-    if (els.btnCopyJson) els.btnCopyJson.disabled = !on;
-  };
   const toFixed = (n) => {
     if (typeof n === 'number') return n.toFixed(2);
     if (n == null) return '';
@@ -38,20 +32,7 @@
     return Number.isFinite(f) ? f.toFixed(2) : String(n);
   };
 
-  // --- current-week TSV builder (unchanged from your earlier behavior)
-  const buildTsv = (week, matchups = []) => {
-    const lines = [];
-    lines.push(String(week ?? ''));
-    lines.push('');
-    for (const m of matchups) {
-      lines.push(`${m.homeTeam}\t${toFixed(m.homeScore)}`);
-      lines.push(`${m.awayTeam}\t${toFixed(m.awayScore)}`);
-      lines.push('');
-    }
-    return lines.join('\n').trimEnd();
-  };
-
-  // --- render current-week match table
+  // ---------- current-week match table ----------
   function renderMatchTable(matchups = []) {
     const tbl = els.matchTable;
     if (!tbl) return;
@@ -88,14 +69,11 @@
   }
 
   function clearOutputs() {
-    if (els.tsvOut) els.tsvOut.textContent = '';
-    if (els.jsonOut) els.jsonOut.textContent = '';
     if (els.matchTable) els.matchTable.innerHTML = '';
     setState('Ready');
-    enableCopies(false);
   }
 
-  // --- file helpers
+  // ---------- file helpers ----------
   const fileToDataUrl = (file) => new Promise((resolve, reject) => {
     const fr = new FileReader();
     fr.onerror = reject;
@@ -103,7 +81,7 @@
     fr.readAsDataURL(file);
   });
 
-  // --- choose/paste/drag
+  // choose / drag / paste
   if (els.drop && els.file) {
     els.drop.addEventListener('click', () => els.file.click());
     ['dragenter','dragover'].forEach(ev => els.drop.addEventListener(ev, e => {
@@ -176,11 +154,7 @@
         const mostRecent = json.items[0];
 
         els.week.value = String(w);
-        const payload = { week: w, matchups: mostRecent.matchups || [] };
-        els.tsvOut.textContent = buildTsv(w, payload.matchups);
-        els.jsonOut.textContent = JSON.stringify(payload, null, 2);
-        renderMatchTable(payload.matchups);
-        enableCopies(true);
+        renderMatchTable(mostRecent.matchups || []);
         setState('Loaded');
       });
     });
@@ -191,7 +165,8 @@
       const res = await fetch('/api/history');
       const json = await res.json();
       if (!res.ok) throw new Error(json?.error || res.statusText);
-      // Keep only the newest per week
+
+      // Keep newest per week
       const byWeek = new Map();
       (json.items || []).forEach(item => {
         const w = Number(item.week);
@@ -201,7 +176,7 @@
       const list = Array.from(byWeek.values()).sort((a,b) => a.week - b.week);
       renderWeeksSummary(list);
 
-      // also (re)build league tables from full history
+      // build league tables from full history
       renderLeagueTables(json.items || []);
     } catch {
       renderWeeksSummary([]);
@@ -224,8 +199,8 @@
   }
 
   function computePerWeek(allItems, teams) {
-    // Build per-week maps: scores, winners
-    const perWeek = {}; // week -> { scores: Map(team->score), winners:Set(team), losers:Set(team) }
+    // week -> { scores: Map(team->score), winners:Set(team), losers:Set(team) }
+    const perWeek = {};
     for (const it of allItems) {
       const w = Number(it.week);
       if (!w) continue;
@@ -269,12 +244,12 @@
     return WL;
   }
 
+  // rank map with average ranks for ties (desc values best)
   function rankArrayDescending(values) {
-    // returns map: name->rank (1 = best) with average ranks for ties
     const entries = [...values].sort((a,b) => b[1]-a[1]); // desc by value
     let i=0, out=new Map();
     while (i<entries.length) {
-      let j=i, sumPos=0, count=0, rankStart=i+1;
+      let j=i, sumPos=0, count=0;
       const val = entries[i][1];
       while (j<entries.length && entries[j][1]===val) { sumPos += (j+1); count++; j++; }
       const avgRank = sumPos/count;
@@ -285,9 +260,8 @@
   }
 
   function computeWavyPoints(perWeek, teams) {
-    // Wavy points: each week, rank teams by PF (higher better) and award 12..1
-    // If you have a different scale, tweak `pointsForRank`.
-    const scale = teams.length; // 12 teams => 12..1
+    // Wavy points: rank each week by PF (higher better), award N..1
+    const scale = teams.length; // e.g., 12 teams => 12..1
     const byWeek = {};
     const totals = new Map(teams.map(t => [t, 0]));
     for (let w = 1; w <= 18; w++) {
@@ -328,7 +302,7 @@
     return { byWeek, totals };
   }
 
-  function renderMatrixTable(tbl, titleRow, teams, dataByWeek, formatter = (x)=>x) {
+  function renderMatrixTable(tbl, _title, teams, dataByWeek, formatter = (x)=>x) {
     if (!tbl) return;
     const weeks = [...Array(18)].map((_,i)=>i+1);
     tbl.innerHTML = `
@@ -343,7 +317,7 @@
     `;
     const tbody = tbl.querySelector('tbody');
 
-    // totals
+    // totals for left column
     const totals = new Map(teams.map(t => [t, 0]));
     teams.forEach(t => {
       weeks.forEach(w => {
@@ -366,7 +340,7 @@
   function renderSummaryTable(tbl, teams, wlTotals, wavyTotals, pfTotals) {
     if (!tbl) return;
 
-    // “Yahoo rank” = rank by Wins (desc), tiebreak Points For (desc)
+    // Yahoo rank = Wins (desc), tiebreak Points For (desc)
     const yahooSorted = [...teams].sort((a,b) => {
       const dw = (wlTotals.get(b)||0) - (wlTotals.get(a)||0);
       if (dw) return dw;
@@ -374,25 +348,24 @@
     });
     const yahooRank = new Map(yahooSorted.map((t,i)=>[t, i+1]));
 
-    // “Wavy Points rank” (desc totals)
+    // Wavy rank = Wavy totals (desc)
     const wavySorted = [...teams].sort((a,b) => (wavyTotals.get(b)||0) - (wavyTotals.get(a)||0));
     const wavyRank = new Map(wavySorted.map((t,i)=>[t, i+1]));
 
-    // Hybrid = average
+    // Hybrid = average of ranks
     const hybrid = new Map(
       teams.map(t => [
         t,
         ((yahooRank.get(t) || 0) + (wavyRank.get(t) || 0)) / 2,
       ])
     );
-    
-    // Sort by hybrid rank (asc). Break ties with Points For (desc).
+
+    // Sort by hybrid (asc). Tie-break by Points For (desc).
     const order = [...teams].sort((a, b) => {
       const diff = hybrid.get(a) - hybrid.get(b);
-      if (Math.abs(diff) > 1e-9) return diff; // not tied
+      if (Math.abs(diff) > 1e-9) return diff;
       return (pfTotals.get(b) || 0) - (pfTotals.get(a) || 0);
     });
-
 
     tbl.innerHTML = `
       <thead>
@@ -408,8 +381,7 @@
       <tbody></tbody>
     `;
     const tbody = tbl.querySelector('tbody');
-
-    function ordinal(n){ return n + (['th','st','nd','rd'][(n%100>>3^1&&n%10)||0]||'th'); }
+    const ordinal = (n) => n + (['th','st','nd','rd'][(n%100>>3^1&&n%10)||0]||'th');
 
     order.forEach((t,idx) => {
       const tr = document.createElement('tr');
@@ -433,7 +405,7 @@
     const wavy = computeWavyPoints(perWeek, teams);
     const pf = computePointsForTotals(perWeek, teams);
 
-    // W-L table: totals are wins; weekly cells show “W/L/blank”
+    // weekly grids
     const wlByWeek = {};
     for (let w=1; w<=18; w++) wlByWeek[w] = WL.byWeek[w];
 
@@ -441,6 +413,7 @@
     renderMatrixTable(els.wavyTable, 'Wavy', teams, wavy.byWeek, (v)=>v?toFixed(v):'');
     renderMatrixTable(els.pfTable, 'PointsFor', teams, pf.byWeek, (v)=>v?toFixed(v):'');
 
+    // summary
     renderSummaryTable(els.summaryTable, teams, WL.totals, wavy.totals, pf.totals);
   }
 
@@ -464,9 +437,6 @@
 
         if (!resp.ok) {
           setState('Error');
-          els.tsvOut.textContent = '';
-          els.jsonOut.textContent = JSON.stringify(data, null, 2);
-          enableCopies(false);
           return;
         }
 
@@ -474,29 +444,20 @@
         const week = data.week ?? hintWeek ?? null;
         if (els.week && week != null) els.week.value = String(week);
 
-        // Current-week outputs
-        els.tsvOut.textContent = buildTsv(week, data.matchups || []);
-        els.jsonOut.textContent = JSON.stringify({ week, matchups: data.matchups || [] }, null, 2);
+        // show current-week results
         renderMatchTable(data.matchups || []);
-        enableCopies(true);
         setState('Done');
 
         // refresh history + league tables (the API saved this already)
         await refreshWeeksSummary();
       } catch (err) {
         setState('Error');
-        els.tsvOut.textContent = '';
-        els.jsonOut.textContent = JSON.stringify({ error: String(err?.message || err) }, null, 2);
-        enableCopies(false);
       } finally {
         els.btnUpload.disabled = false;
       }
     });
   }
 
-  if (els.btnCopyTsv) els.btnCopyTsv.addEventListener('click', () => copy(els.tsvOut.textContent));
-  if (els.btnCopyJson) els.btnCopyJson.addEventListener('click', () => copy(els.jsonOut.textContent));
-
-  // initial
+  // initial load
   refreshWeeksSummary();
 })();

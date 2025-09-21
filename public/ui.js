@@ -118,6 +118,78 @@
     if (file) await onFile(file);
   });
 
+  // ---- Weeks summary helpers ----
+  const weeksTbl = document.getElementById('weeksTable');
+  
+  function renderWeeksSummary(weeks = []) {
+    if (!weeksTbl) return;
+    const body = weeksTbl.querySelector('tbody');
+    body.innerHTML = '';
+  
+    // We want rows 1..18 whether or not there's data
+    for (let w = 1; w <= 18; w++) {
+      const found = weeks.find(x => Number(x.week) === w);
+      const has = !!found;
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td style="padding:6px 8px">${w}</td>
+        <td style="padding:6px 8px;${has ? 'color:#36c36b' : 'color:#9fb0c3'}">${has ? '✔ has data' : '—'}</td>
+        <td style="padding:6px 8px">${has ? (found.savedAtLocal || found.savedAt || '') : ''}</td>
+        <td style="padding:6px 8px">
+          ${has ? `<button data-week="${w}" class="wk-load" style="padding:4px 8px;border:1px solid var(--border);background:#1f2733;border-radius:6px;color:var(--text);cursor:pointer">Load</button>` : ''}
+        </td>
+      `;
+      body.appendChild(tr);
+    }
+  
+    // click-to-load
+    body.querySelectorAll('.wk-load').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const w = Number(btn.dataset.week);
+        try {
+          const res = await fetch(`/api/history?week=${w}`);
+          const json = await res.json();
+          if (!res.ok || !json || !json.items || !json.items.length) return;
+  
+          const mostRecent = json.items[0]; // newest first from API
+          // show in UI
+          els.week.value = String(w);
+          const payload = { week: w, matchups: mostRecent.matchups || [] };
+          els.tsvOut.textContent = buildTsv(w, payload.matchups);
+          els.jsonOut.textContent = JSON.stringify(payload, null, 2);
+          renderTable(payload.matchups);
+          enableCopies(true);
+          setState('Loaded');
+        } catch (e) {
+          setState('Error loading history');
+        }
+      });
+    });
+  }
+
+async function refreshWeeksSummary() {
+  try {
+    const res = await fetch('/api/history');
+    const json = await res.json();
+    if (!res.ok) throw new Error(json?.error || res.statusText);
+
+    // Expecting { items: [{week, savedAt, savedAtLocal, ...}, ...] }
+    // Collapse to latest per week
+    const byWeek = new Map();
+    (json.items || []).forEach(item => {
+      const w = Number(item.week);
+      if (!w) return;
+      if (!byWeek.has(w)) byWeek.set(w, item);
+    });
+    const list = Array.from(byWeek.values())
+      .sort((a,b) => Number(a.week) - Number(b.week));
+    renderWeeksSummary(list);
+  } catch {
+    renderWeeksSummary([]); // show empty weeks
+  }
+}
+
+  
   async function onFile(file) {
     clearOutputs();
     const url = await fileToDataUrl(file);
@@ -163,16 +235,17 @@
           enableCopies(false);
           return;
         }
-
+        refreshWeeksSummary();
         const week = data.week ?? hintWeek ?? null;
         if (els.week && week != null) els.week.value = String(week);
-
+        
         // TSV + JSON + TABLE
         els.tsvOut.textContent = buildTsv(week, data.matchups || []);
         els.jsonOut.textContent = JSON.stringify({ week, matchups: data.matchups || [] }, null, 2);
         renderTable(data.matchups || []);
 
         setState('Done');
+        await refreshWeeksSummary();
         enableCopies(true);
       } catch (err) {
         setState('Error');

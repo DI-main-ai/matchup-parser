@@ -1,38 +1,89 @@
-<!DOCTYPE html>
-<html>
-  <head>
-    <title>Matchup Parser</title>
-    <link rel="stylesheet" href="styles.css" />
-  </head>
-  <body>
-    <h1>Matchup Parser</h1>
-    <div>
-      <label for="week">Week:</label>
-      <input type="number" id="week" value="1" />
-    </div>
-    <div>
-      <label for="versionSelect">Version:</label>
-      <select id="versionSelect">
-        <option value="0">Latest</option>
-      </select>
-    </div>
-    <div id="drop-zone">
-      Drag & drop a screenshot here
-      <input type="file" id="fileInput" />
-    </div>
-    <button id="uploadBtn">Upload & Parse</button>
-    <button id="clearBtn">Clear</button>
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Matchup Parser</title>
+  <style>
+    :root { color-scheme: dark; }
+    body { margin: 16px; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background:#0b0e13; color:#e6e9ef; }
+    h1 { margin: 0 0 16px; font-size: 28px; }
+    .row { display:flex; gap:16px; flex-wrap:wrap; }
+    .panel { flex:1 1 420px; min-width:320px; background:#11161f; border:1px solid #202634; border-radius:10px; padding:16px; }
+    label { display:block; margin:0 0 8px; opacity:.9; }
+    input[type="number"], input[type="text"] {
+      width:140px; padding:8px 10px; border-radius:8px; border:1px solid #263047; background:#0d1320; color:#e6e9ef;
+    }
+    .drop {
+      display:flex; align-items:center; justify-content:center; text-align:center;
+      border:2px dashed #2d3b57; border-radius:12px; height:260px; padding:10px; cursor:pointer;
+      background:#0d1320; color:#c9d4e6;
+    }
+    .drop:hover { border-color:#3f87ff; }
+    .muted { color:#97a3b6; font-size:13px; }
+    .actions { display:flex; gap:10px; margin-top:12px; }
+    button {
+      background:#1b2437; color:#e6e9ef; border:1px solid #2b3855; border-radius:10px; padding:8px 14px; cursor:pointer;
+    }
+    button:disabled { opacity:.5; cursor:not-allowed; }
+    pre {
+      white-space:pre; overflow:auto; background:#0d1320; border:1px solid #222c41; border-radius:10px; padding:12px; min-height:140px;
+    }
+    .thumb { max-width:100%; max-height:140px; border-radius:8px; border:1px solid #1f2a42; display:block; }
+    .flex { display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+  </style>
+</head>
+<body>
+  <h1>Matchup Parser</h1>
 
-    <div id="response">
-      <h2>API response</h2>
-      <div>
-        <button id="copyTsv">Copy TSV</button>
-        <button id="copyJson">Copy JSON</button>
+  <div class="row">
+    <section class="panel">
+      <div class="flex">
+        <label for="week">Week:</label>
+        <input type="number" id="week" value="1" min="1" max="18" />
+        <span id="state" class="muted">Ready</span>
       </div>
-      <pre id="tsvOutput"></pre>
-      <pre id="jsonOutput"></pre>
-    </div>
 
-    <script src="/ui.js"></script>
-  </body>
+      <label id="drop" class="drop">
+        <div>
+          <div style="font-size:15px;font-weight:700">Drag &amp; drop a screenshot here</div>
+          <div class="muted" style="margin-top:6px">…or click to choose a file, or paste (Ctrl/Cmd+V)</div>
+        </div>
+        <input id="file" type="file" accept="image/*" style="display:none" />
+      </label>
+
+      <div class="actions">
+        <button id="btnUpload">Upload &amp; Parse</button>
+        <button id="btnClear">Clear</button>
+      </div>
+
+      <div id="thumbWrap" style="display:none;margin-top:12px">
+        <img id="thumb" class="thumb" alt="preview" />
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="flex" id="apiResponseHeader" style="justify-content:space-between">
+        <div style="font-weight:600">API response</div>
+        <div class="actions" style="margin:0">
+          <button id="btnCopyTsv" disabled>Copy TSV</button>
+          <button id="btnCopyJson" disabled>Copy JSON</button>
+        </div>
+      </div>
+
+      <!-- History toolbar is injected just above this TSV box by ui.js -->
+      <div id="tsvWrap">
+        <div class="muted">TSV</div>
+        <pre id="tsvOut"></pre>
+      </div>
+
+      <div style="margin-top:12px">
+        <div class="muted">JSON</div>
+        <pre id="jsonOut"></pre>
+      </div>
+    </section>
+  </div>
+
+  <script src="/ui.js" defer></script>
+</body>
 </html>

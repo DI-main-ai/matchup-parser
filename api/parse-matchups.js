@@ -37,10 +37,9 @@ Rules:
 
     const userPrompt = `Extract data.`.trim();
 
-    // Chat Completions with image input (SDK v4.x)
+    // Note: no temperature here (the model enforces its default).
     const response = await client.chat.completions.create({
       model: 'gpt-5-mini',
-      temperature: 0,
       messages: [
         { role: 'system', content: systemPrompt },
         {
@@ -67,8 +66,10 @@ Rules:
     const weekSource = parsed.weekSource === 'image' ? 'image' : null;
     const matchups = Array.isArray(parsed.matchups) ? parsed.matchups : [];
 
-    // Respect precedence: image-extracted wins only when weekSource === 'image'.
-    const finalWeek = (weekSource === 'image' && extractedWeek) ? extractedWeek : (Number.isFinite(hintWeek) ? hintWeek : hintWeek || null);
+    // Respect precedence: image-extracted (only if weekSource==='image') > manual hint
+    const finalWeek = (weekSource === 'image' && extractedWeek)
+      ? extractedWeek
+      : (Number.isFinite(hintWeek) ? hintWeek : hintWeek || null);
 
     res.json({
       week: finalWeek,

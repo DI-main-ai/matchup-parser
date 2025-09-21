@@ -1,181 +1,168 @@
-/* ui.js — robust UI (null-safe), TSV format exact, week detection hierarchy */
-
+/* public/ui.js */
 (() => {
-  // DOM
-  const weekInput   = document.getElementById("weekInput");
-  const fileInput   = document.getElementById("file");
-  const dropZone    = document.getElementById("drop");
-  const previewWrap = document.getElementById("previewWrap");
-  const previewImg  = document.getElementById("preview");
+  const els = {
+    week: document.getElementById('week'),
+    drop: document.getElementById('drop'),
+    file: document.getElementById('file'),
+    btnUpload: document.getElementById('btnUpload'),
+    btnClear: document.getElementById('btnClear'),
+    hint: document.getElementById('hint'),
+    thumbWrap: document.getElementById('thumbWrap'),
+    thumb: document.getElementById('thumb'),
+    state: document.getElementById('state'),
+    tsvOut: document.getElementById('tsvOut'),
+    jsonOut: document.getElementById('jsonOut'),
+    btnCopyTsv: document.getElementById('btnCopyTsv'),
+    btnCopyJson: document.getElementById('btnCopyJson'),
+  };
 
-  const btnUpload   = document.getElementById("btnUpload");
-  const btnClear    = document.getElementById("btnClear");
-
-  const tsvOut      = document.getElementById("tsvOut");
-  const jsonOut     = document.getElementById("jsonOut");
-  const btnCopyTSV  = document.getElementById("btnCopyTSV");
-  const btnCopyJSON = document.getElementById("btnCopyJSON");
-
-  const statusEl    = document.getElementById("status");
-
-  // State
-  let imageDataUrl = null;
-
-  // Utils
-  const fmt2 = (n) => Number(n).toFixed(2);
-  const setStatus = (s) => { if (statusEl) statusEl.textContent = s; };
-  const setDisabled = (el, v) => { if (el) el.disabled = !!v; };
-
-  function showPreview(src) {
-    if (!previewWrap || !previewImg) return;
-    if (!src) { previewWrap.style.display = "none"; return; }
-    previewImg.src = src;
-    previewWrap.style.display = "block";
-  }
-
-  // filename → week number (e.g. "Week 3.png")
-  function maybeWeekFromFilename(file) {
-    if (!file || !file.name) return null;
-    const m = /week\s*(\d{1,2})/i.exec(file.name);
-    return m ? Number(m[1]) : null;
-  }
-
-  // Build TSV locally if API doesn't send `tsv`
-  function buildTSV(payload) {
-    const w = payload?.week ?? "";
-    const rows = (payload?.matchups ?? []).map(m =>
-      [
-        m.homeTeam,
-        fmt2(m.homeScore),
-        m.awayTeam,
-        fmt2(m.awayScore),
-        m.winner,
-        fmt2(m.diff)
-      ].join("\t")
-    );
-    return `${w}\n\n${rows.join("\n")}`;
-  }
-
-  async function copy(text) {
-    try { await navigator.clipboard.writeText(text); } catch {}
-  }
-
-  function readFileToDataURL(file) {
-    return new Promise((resolve, reject) => {
-      const fr = new FileReader();
-      fr.onload = () => resolve(fr.result);
-      fr.onerror = reject;
-      fr.readAsDataURL(file);
+  // ---- helpers ----
+  const setState = (txt) => els.state && (els.state.textContent = txt);
+  const enable = (bool) => {
+    [els.btnUpload, els.btnClear, els.btnCopyTsv, els.btnCopyJson].forEach(b => {
+      if (!b) return;
+      b.disabled = !bool;
     });
+  };
+  const clearOutputs = () => {
+    if (els.tsvOut) els.tsvOut.textContent = '';
+    if (els.jsonOut) els.jsonOut.textContent = '';
+    setState('Ready');
+    if (els.btnCopyTsv) els.btnCopyTsv.disabled = true;
+    if (els.btnCopyJson) els.btnCopyJson.disabled = true;
+  };
+  const toFixed = (n) => {
+    if (typeof n === 'number') return n.toFixed(2);
+    if (!n) return '';
+    const f = parseFloat(String(n).replace(/[^\d.-]/g, ''));
+    return isFinite(f) ? f.toFixed(2) : String(n);
+  };
+  function buildTsv(week, matchups) {
+    const lines = [];
+    lines.push(String(week ?? ''));
+    lines.push('');
+    for (const m of matchups) {
+      lines.push(`${m.homeTeam}\t${toFixed(m.homeScore)}`);
+      lines.push(`${m.awayTeam}\t${toFixed(m.awayScore)}`);
+      lines.push('');
+    }
+    return lines.join('\n').trimEnd();
   }
-
-  async function acceptFile(file) {
-    if (!file) return;
-    const w = maybeWeekFromFilename(file);
-    if (w && weekInput) weekInput.value = String(w); // priority 1: filename
-
-    imageDataUrl = await readFileToDataURL(file);
-    showPreview(imageDataUrl);
-    setDisabled(btnUpload, false);
-    setDisabled(btnClear, false);
+  function copy(text) {
+    try { navigator.clipboard.writeText(text); } catch {}
   }
-
-  // Drag & drop
-  if (dropZone) {
-    dropZone.addEventListener("dragover", (e) => {
-      e.preventDefault();
-      dropZone.classList.add("drag");
-    });
-    dropZone.addEventListener("dragleave", () => dropZone.classList.remove("drag"));
-    dropZone.addEventListener("drop", async (e) => {
-      e.preventDefault();
-      dropZone.classList.remove("drag");
-      const f = e.dataTransfer?.files?.[0];
-      if (f) acceptFile(f);
-    });
+  function extractWeekFromFilename(name) {
+    if (!name) return null;
+    const m = name.match(/(?:^|[\s_-])(week|wk|w)\s*([0-9]{1,2})(?=\D|$)/i);
+    return m ? parseInt(m[2], 10) : null;
   }
-
-  // Choose
-  if (fileInput) {
-    fileInput.addEventListener("change", async (e) => {
-      const f = e.target.files?.[0];
-      if (f) acceptFile(f);
-    });
-  }
-
-  // Paste screenshot
-  window.addEventListener("paste", async (e) => {
-    const item = [...(e.clipboardData?.items || [])].find(i => i.type?.startsWith("image/"));
-    if (!item) return;
-    const file = item.getAsFile();
-    if (file) acceptFile(file);
+  const fileToDataUrl = (file) => new Promise((resolve, reject) => {
+    const fr = new FileReader();
+    fr.onerror = reject;
+    fr.onload = () => resolve(fr.result);
+    fr.readAsDataURL(file);
   });
 
-  // Upload & parse
-  if (btnUpload) {
-    btnUpload.addEventListener("click", async () => {
-      if (!imageDataUrl) return;
-      setDisabled(btnUpload, true);
-      setStatus("Calling API...");
+  // ---- UI wiring ----
+  if (els.drop && els.file) {
+    els.drop.addEventListener('click', () => els.file.click());
+    ['dragenter','dragover'].forEach(ev => els.drop.addEventListener(ev, e => { e.preventDefault(); e.dataTransfer.dropEffect='copy'; }));
+    els.drop.addEventListener('drop', async (e) => {
+      e.preventDefault();
+      const file = e.dataTransfer.files?.[0];
+      if (file) await onFileChosen(file);
+    });
+    els.file.addEventListener('change', async () => {
+      const file = els.file.files?.[0];
+      if (file) await onFileChosen(file);
+    });
+  }
 
-      const week = Number(weekInput?.value || 0) || 0; // priority 3 (fallback) – API may override if OCR finds week
+  // enable paste-from-clipboard
+  window.addEventListener('paste', async (e) => {
+    const item = Array.from(e.clipboardData?.items || []).find(i => i.type.startsWith('image/'));
+    if (!item) return;
+    const file = item.getAsFile();
+    if (file) await onFileChosen(file, { fromPaste: true });
+  });
+
+  async function onFileChosen(file, opts = {}) {
+    clearOutputs();
+    enable(true);
+    const fnameWeek = extractWeekFromFilename(file.name);
+    if (fnameWeek) {
+      els.week.value = String(fnameWeek);
+      if (els.hint) els.hint.textContent = `Week picked from filename: ${fnameWeek}`;
+    } else if (els.hint) {
+      els.hint.textContent = opts.fromPaste ? 'Image pasted from clipboard' : `File: ${file.name}`;
+    }
+    // preview
+    const url = await fileToDataUrl(file);
+    if (els.thumb) { els.thumb.src = url; }
+    if (els.thumbWrap) els.thumbWrap.style.display = 'block';
+    // stash for upload
+    els.drop.dataset.imageDataUrl = url;
+  }
+
+  if (els.btnClear) {
+    els.btnClear.addEventListener('click', () => {
+      if (els.file) els.file.value = '';
+      if (els.thumbWrap) els.thumbWrap.style.display = 'none';
+      els.drop?.removeAttribute('data-image-data-url');
+      clearOutputs();
+      enable(false);
+    });
+  }
+
+  if (els.btnUpload) {
+    els.btnUpload.addEventListener('click', async () => {
+      const dataUrl = els.drop?.dataset.imageDataUrl;
+      if (!dataUrl) {
+        setState('Please select an image first');
+        return;
+      }
+      const weekManual = parseInt(els.week?.value || '0', 10) || null;
+
+      setState('Calling API…');
+      if (els.btnUpload) els.btnUpload.disabled = true;
 
       try {
-        const res = await fetch("/api/parse-matchups", {
-          method: "POST",
-          headers: {"content-type":"application/json"},
-          body: JSON.stringify({ week, imageDataUrl })
+        const body = { imageDataUrl: dataUrl, hintWeek: weekManual };
+        const res = await fetch('/api/parse-matchups', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(body)
         });
+        const json = await res.json();
+        if (!res.ok) throw new Error(json.error || res.statusText);
 
-        const data = await res.json();
+        // Decide final week: filename > image-extracted > manual > (server week)
+        const weekFromFile = extractWeekFromFilename(els.file?.files?.[0]?.name || '');
+        const extracted = json.meta?.extractedWeek && json.meta?.weekSource === 'image' ? json.meta.extractedWeek : null;
+        const finalWeek = weekFromFile ?? extracted ?? weekManual ?? json.week ?? null;
 
-        // If API inferred a week (priority 2), reflect it in the selector.
-        if (typeof data.week === "number" && weekInput) {
-          weekInput.value = String(data.week);
-        }
+        if (els.week) els.week.value = finalWeek ? String(finalWeek) : (els.week.value || '1');
 
-        const tsv = data.tsv || buildTSV(data);
-        if (tsvOut) tsvOut.textContent = tsv;
+        // Build TSV exactly like your spec
+        const matchups = json.matchups || [];
+        const tsv = buildTsv(finalWeek, matchups);
 
-        if (jsonOut) jsonOut.textContent = JSON.stringify(
-          { week: data.week, matchups: data.matchups },
-          null, 2
-        );
+        els.tsvOut.textContent = tsv;
+        els.jsonOut.textContent = JSON.stringify({ week: finalWeek, matchups }, null, 2);
 
-        setStatus("Done");
-        setDisabled(btnCopyTSV, false);
-        setDisabled(btnCopyJSON, false);
+        setState('Done');
+        if (els.btnCopyTsv) els.btnCopyTsv.disabled = false;
+        if (els.btnCopyJson) els.btnCopyJson.disabled = false;
       } catch (err) {
-        if (tsvOut)  tsvOut.textContent = "";
-        if (jsonOut) jsonOut.textContent = JSON.stringify({ error: String(err) }, null, 2);
-        setStatus("Error");
+        setState('Error');
+        els.tsvOut.textContent = '';
+        els.jsonOut.textContent = JSON.stringify({ error: String(err.message || err) }, null, 2);
       } finally {
-        setDisabled(btnUpload, false);
+        if (els.btnUpload) els.btnUpload.disabled = false;
       }
     });
   }
 
-  if (btnClear) {
-    btnClear.addEventListener("click", () => {
-      imageDataUrl = null;
-      showPreview(null);
-      if (tsvOut)  tsvOut.textContent = "";
-      if (jsonOut) jsonOut.textContent = "";
-      setStatus("Ready");
-      setDisabled(btnUpload, true);
-      setDisabled(btnClear, true);
-      setDisabled(btnCopyTSV, true);
-      setDisabled(btnCopyJSON, true);
-    });
-  }
-
-  if (btnCopyTSV)  btnCopyTSV.addEventListener("click", () => copy(tsvOut?.textContent || ""));
-  if (btnCopyJSON) btnCopyJSON.addEventListener("click", () => copy(jsonOut?.textContent || ""));
-
-  // Init
-  setStatus("Ready");
-  setDisabled(btnUpload, true);
-  setDisabled(btnClear, true);
-  setDisabled(btnCopyTSV, true);
-  setDisabled(btnCopyJSON, true);
+  if (els.btnCopyTsv) els.btnCopyTsv.addEventListener('click', () => copy(els.tsvOut.textContent));
+  if (els.btnCopyJson) els.btnCopyJson.addEventListener('click', () => copy(els.jsonOut.textContent));
 })();

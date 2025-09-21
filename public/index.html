@@ -99,7 +99,23 @@
         <div class="muted" style="margin-bottom:6px">Table</div>
         <div id="tableWrap"><table id="matchTable"></table></div>
       </div>
-
+      <!-- place inside the right column, above TSV or where you want -->
+      <div>
+        <div class="muted" style="margin-bottom:6px">Weeks</div>
+        <div id="weeksWrap" class="mono" style="background:var(--soft);border:1px solid var(--border);border-radius:var(--round);padding:10px;overflow:auto">
+          <table id="weeksTable" style="width:100%;min-width:560px;border-collapse:collapse">
+            <thead>
+              <tr>
+                <th style="text-align:left;padding:6px 8px;color:var(--muted)">Week</th>
+                <th style="text-align:left;padding:6px 8px;color:var(--muted)">Status</th>
+                <th style="text-align:left;padding:6px 8px;color:var(--muted)">Saved</th>
+                <th style="text-align:left;padding:6px 8px;color:var(--muted)">Action</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
       <!-- TSV -->
       <div>
         <div class="muted" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">

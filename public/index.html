@@ -2,88 +2,124 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Matchup Parser</title>
   <style>
-    :root { color-scheme: dark; }
-    body { margin: 16px; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background:#0b0e13; color:#e6e9ef; }
-    h1 { margin: 0 0 16px; font-size: 28px; }
-    .row { display:flex; gap:16px; flex-wrap:wrap; }
-    .panel { flex:1 1 420px; min-width:320px; background:#11161f; border:1px solid #202634; border-radius:10px; padding:16px; }
-    label { display:block; margin:0 0 8px; opacity:.9; }
+    :root {
+      --bg:#0f1318; --panel:#151b22; --soft:#1e2631; --text:#e7edf5; --muted:#9fb0c3;
+      --accent:#4aa3ff; --border:#273142; --good:#36c36b; --bad:#ff6b6b;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+      --round: 12px;
+    }
+    * { box-sizing:border-box; }
+    body {
+      margin:0; background:var(--bg); color:var(--text);
+      font: 15px/1.5 system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, Noto Sans, "Apple Color Emoji", "Segoe UI Emoji";
+    }
+    h1 { margin:18px 20px; font-size:28px; font-weight:800; letter-spacing:.3px; }
+    .grid {
+      display:grid; grid-template-columns: 1.1fr 1.4fr; gap:16px; padding:0 16px 20px;
+    }
+    .panel {
+      background:var(--panel); border:1px solid var(--border); border-radius:var(--round);
+      padding:16px; min-height:120px;
+    }
+    label { color:var(--muted); font-size:13px; margin-right:8px; }
     input[type="number"], input[type="text"] {
-      width:140px; padding:8px 10px; border-radius:8px; border:1px solid #263047; background:#0d1320; color:#e6e9ef;
+      background:var(--soft); color:var(--text); border:1px solid var(--border); border-radius:8px;
+      padding:8px 10px; width:120px;
     }
+    .row { display:flex; align-items:center; gap:12px; margin-bottom:12px; }
     .drop {
-      display:flex; align-items:center; justify-content:center; text-align:center;
-      border:2px dashed #2d3b57; border-radius:12px; height:260px; padding:10px; cursor:pointer;
-      background:#0d1320; color:#c9d4e6;
+      border:2px dashed var(--border); border-radius:var(--round); height:300px;
+      display:grid; place-items:center; text-align:center; color:var(--muted);
+      background: repeating-linear-gradient(135deg, transparent 0 8px, rgba(255,255,255,.015) 8px 16px);
+      cursor:pointer;
     }
-    .drop:hover { border-color:#3f87ff; }
-    .muted { color:#97a3b6; font-size:13px; }
     .actions { display:flex; gap:10px; margin-top:12px; }
     button {
-      background:#1b2437; color:#e6e9ef; border:1px solid #2b3855; border-radius:10px; padding:8px 14px; cursor:pointer;
+      background:#1f2733; color:var(--text); border:1px solid var(--border); padding:8px 12px;
+      border-radius:10px; cursor:pointer;
     }
-    button:disabled { opacity:.5; cursor:not-allowed; }
+    button:disabled{ opacity:.5; cursor:not-allowed; }
+    .muted{ color:var(--muted); }
+    .mono{ font-family:var(--mono); font-size:13px; }
     pre {
-      white-space:pre; overflow:auto; background:#0d1320; border:1px solid #222c41; border-radius:10px; padding:12px; min-height:140px;
+      background:var(--soft); border:1px solid var(--border); border-radius:var(--round);
+      padding:12px; white-space:pre; overflow:auto; min-height:120px;
     }
-    .thumb { max-width:100%; max-height:140px; border-radius:8px; border:1px solid #1f2a42; display:block; }
-    .flex { display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+    .two { display:grid; grid-template-rows: auto auto 1fr 1fr; gap:12px; }
+    #thumbWrap{ display:none; margin-top:10px; }
+    #thumb{ max-width:220px; border-radius:10px; border:1px solid var(--border); }
+
+    /* TABLE */
+    #tableWrap {
+      background:var(--soft); border:1px solid var(--border); border-radius:var(--round);
+      padding:10px; overflow:auto;
+    }
+    table { border-collapse:collapse; width:100%; min-width:520px; }
+    th, td { padding:8px 10px; border-bottom:1px solid var(--border); text-align:left; }
+    th { color:var(--muted); font-weight:600; }
+    td.score { font-family:var(--mono); }
+    td.winner { font-weight:700; color:var(--good); }
   </style>
 </head>
 <body>
   <h1>Matchup Parser</h1>
 
-  <div class="row">
+  <div class="grid">
+    <!-- LEFT: uploader -->
     <section class="panel">
-      <div class="flex">
+      <div class="row">
         <label for="week">Week:</label>
-        <input type="number" id="week" value="1" min="1" max="18" />
+        <input id="week" type="number" min="1" max="18" value="1" />
         <span id="state" class="muted">Ready</span>
       </div>
 
       <label id="drop" class="drop">
         <div>
-          <div style="font-size:15px;font-weight:700">Drag &amp; drop a screenshot here</div>
+          <div style="font-weight:700">Drag & drop a screenshot here</div>
           <div class="muted" style="margin-top:6px">…or click to choose a file, or paste (Ctrl/Cmd+V)</div>
         </div>
-        <input id="file" type="file" accept="image/*" style="display:none" />
+        <input id="file" type="file" accept="image/*" hidden />
       </label>
 
       <div class="actions">
-        <button id="btnUpload">Upload &amp; Parse</button>
-        <button id="btnClear">Clear</button>
+        <button id="btnUpload" disabled>Upload & Parse</button>
+        <button id="btnClear" disabled>Clear</button>
       </div>
 
-      <div id="thumbWrap" style="display:none;margin-top:12px">
-        <img id="thumb" class="thumb" alt="preview" />
-      </div>
+      <div id="thumbWrap"><img id="thumb" alt="preview" /></div>
     </section>
 
-    <section class="panel">
-      <div class="flex" id="apiResponseHeader" style="justify-content:space-between">
-        <div style="font-weight:600">API response</div>
-        <div class="actions" style="margin:0">
+    <!-- RIGHT: outputs -->
+    <section class="panel two">
+      <!-- TABLE -->
+      <div>
+        <div class="muted" style="margin-bottom:6px">Table</div>
+        <div id="tableWrap"><table id="matchTable"></table></div>
+      </div>
+
+      <!-- TSV -->
+      <div>
+        <div class="muted" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+          <span>TSV</span>
           <button id="btnCopyTsv" disabled>Copy TSV</button>
+        </div>
+        <pre id="tsvOut" class="mono"></pre>
+      </div>
+
+      <!-- JSON -->
+      <div>
+        <div class="muted" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+          <span>JSON</span>
           <button id="btnCopyJson" disabled>Copy JSON</button>
         </div>
-      </div>
-
-      <!-- History toolbar is injected just above this TSV box by ui.js -->
-      <div id="tsvWrap">
-        <div class="muted">TSV</div>
-        <pre id="tsvOut"></pre>
-      </div>
-
-      <div style="margin-top:12px">
-        <div class="muted">JSON</div>
-        <pre id="jsonOut"></pre>
+        <pre id="jsonOut" class="mono"></pre>
       </div>
     </section>
   </div>
 
-  <script src="/ui.js" defer></script>
+  <script src="/ui.js"></script>
 </body>
 </html>

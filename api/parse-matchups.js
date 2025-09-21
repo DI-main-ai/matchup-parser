@@ -1,87 +1,82 @@
-// api/parse-matchups.js
-const OpenAI = require('openai');
+import { kv } from '@vercel/kv';
+import OpenAI from "openai";
 
-const client = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY
-});
+const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-module.exports = async (req, res) => {
-  if (req.method !== 'POST') {
-    res.status(405).json({ error: 'Use POST' });
-    return;
+// helper: central timezone
+function formatTimestamp(date = new Date()) {
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Chicago",
+    year: "numeric",
+    month: "short",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
+}
+
+export default async function handler(req, res) {
+  if (req.method !== "POST") {
+    return res.status(405).json({ error: "Method not allowed" });
   }
+
   try {
-    const { imageDataUrl, hintWeek } = req.body || {};
-    if (!imageDataUrl) {
-      res.status(400).json({ error: 'imageDataUrl is required' });
-      return;
+    const { week, imageDataUrl, selectedVersionIndex } = req.body;
+
+    if (!week || !imageDataUrl) {
+      return res.status(400).json({ error: "Missing week or image" });
     }
 
-    const systemPrompt = `
-You extract structured data from fantasy-football matchup screenshots.
-
-Rules:
-- Look for a label like "Week N" at the top-left; *only* if you can clearly read it, set weekSource="image" and return that number in "extractedWeek".
-- Do NOT infer week from standings (e.g., "2-0-0 | 1st") or any other numbers; if you cannot see an explicit "Week N", set extractedWeek=null and weekSource=null.
-- Return matchups shown from top to bottom. Each matchup has a left team (home) and a right team (away) with scores (decimals allowed).
-- Output STRICT JSON with keys:
-  {
-    "extractedWeek": number | null,
-    "weekSource": "image" | null,
-    "matchups": [
-      {"homeTeam": string, "homeScore": number, "awayTeam": string, "awayScore": number}
-    ]
-  }
-- No code fences, no commentary.
-`.trim();
-
-    const userPrompt = `Extract data.`.trim();
-
-    // Note: no temperature here (the model enforces its default).
+    // Call OpenAI with image
     const response = await client.chat.completions.create({
-      model: 'gpt-5-mini',
+      model: "gpt-4.1-mini",
       messages: [
-        { role: 'system', content: systemPrompt },
         {
-          role: 'user',
+          role: "system",
+          content: "Extract matchups from the fantasy football screenshot into JSON format.",
+        },
+        {
+          role: "user",
           content: [
-            { type: 'text', text: userPrompt },
-            { type: 'image_url', image_url: { url: imageDataUrl } }
-          ]
-        }
-      ]
+            { type: "text", text: "Parse this image into matchups JSON with homeTeam, awayTeam, homeScore, awayScore, winner, and diff." },
+            { type: "image_url", image_url: { url: imageDataUrl } }
+          ],
+        },
+      ],
     });
 
-    let raw = response.choices?.[0]?.message?.content?.trim() || '';
-    // strip accidental code fences
-    raw = raw.replace(/^```json\s*|\s*```$/g, '').trim();
-
+    const raw = response.choices[0].message?.content || "{}";
     let parsed;
-    try { parsed = JSON.parse(raw); }
-    catch (e) {
-      return res.status(500).json({ error: 'Model returned non-JSON', raw });
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      return res.status(500).json({ error: "Parser did not return valid JSON", raw });
     }
 
-    const extractedWeek = Number.isFinite(parsed.extractedWeek) ? parsed.extractedWeek : null;
-    const weekSource = parsed.weekSource === 'image' ? 'image' : null;
-    const matchups = Array.isArray(parsed.matchups) ? parsed.matchups : [];
+    const newVersion = {
+      timestamp: formatTimestamp(),
+      data: parsed,
+    };
 
-    // Respect precedence: image-extracted (only if weekSource==='image') > manual hint
-    const finalWeek = (weekSource === 'image' && extractedWeek)
-      ? extractedWeek
-      : (Number.isFinite(hintWeek) ? hintWeek : hintWeek || null);
+    const key = `week:${week}:versions`;
 
-    res.json({
-      week: finalWeek,
-      matchups,
-      meta: {
-        extractedWeek,
-        weekSource,
-        hintWeek: hintWeek ?? null
-      }
-    });
+    // Fetch existing history
+    let history = (await kv.get(key)) || [];
+
+    // If user picked an older version, base update on that one
+    if (selectedVersionIndex !== undefined && history[selectedVersionIndex]) {
+      newVersion.data = { ...history[selectedVersionIndex].data, ...parsed };
+    }
+
+    // Insert at front, max 5
+    history.unshift(newVersion);
+    if (history.length > 5) history = history.slice(0, 5);
+
+    await kv.set(key, history);
+
+    return res.status(200).json({ ok: true, week, newVersion, history });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: String(err.message || err) });
+    return res.status(500).json({ error: err.message || "Unknown error" });
   }
-};
+}

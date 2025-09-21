@@ -1,79 +1,38 @@
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Matchup Parser</title>
-  <style>
-    :root { color-scheme: dark; }
-    html, body { margin:0; padding:0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, Apple Color Emoji, Segoe UI Emoji; background:#0f1115; color:#e6e6e6; }
-    .wrap { max-width:1100px; margin:24px auto; padding:0 16px; }
-    h1 { font-size:28px; margin:0 0 16px; }
-    .grid { display:grid; grid-template-columns: 420px 1fr; gap:18px; align-items:start; }
-    .panel { background:#141821; border:1px solid #1b2030; border-radius:12px; padding:16px; }
-    label { font-size:14px; opacity:.9; display:block; margin-bottom:6px; }
-    input[type="number"]{ width:120px; background:#0f1320; border:1px solid #2a3247; color:#e6e6e6; padding:10px 12px; border-radius:10px; font-size:16px; }
-    .drop { margin-top:12px; border:2px dashed #2a3247; border-radius:14px; height:340px; display:flex; align-items:center; justify-content:center; text-align:center; padding:12px; }
-    .muted { color:#96a0b5; font-size:13px; }
-    .row { display:flex; gap:10px; align-items:center; margin-top:12px; }
-    button { background:#1a2236; border:1px solid #2a3247; color:#e6e6e6; border-radius:10px; padding:10px 14px; font-size:14px; cursor:pointer; }
-    button[disabled]{ opacity:.5; cursor:not-allowed; }
-    pre { background:#0f1320; border:1px solid #2a3247; border-radius:10px; padding:12px; white-space:pre; overflow:auto; min-height:160px; }
-    .rightHead { display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; }
-    .stack { display:flex; flex-direction:column; gap:14px; }
-    .small { font-size:12px; color:#9aa6bd; }
-  </style>
-</head>
-<body>
-  <div class="wrap">
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Matchup Parser</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
     <h1>Matchup Parser</h1>
-
-    <div class="grid">
-      <section class="panel">
-        <label for="week">Week:</label>
-        <input id="week" type="number" min="1" max="25" value="1" />
-
-        <label for="file" class="drop" id="drop">
-          <div>
-            <div style="font-size:16px;font-weight:700">Drag &amp; drop a screenshot here</div>
-            <div class="muted" style="margin-top:6px">…or click to choose a file, or paste (Ctrl/Cmd+V)</div>
-          </div>
-          <input id="file" type="file" accept="image/*" style="display:none" />
-        </label>
-
-        <div class="row">
-          <button id="btnUpload" disabled>Upload &amp; Parse</button>
-          <button id="btnClear" disabled>Clear</button>
-        </div>
-
-        <div class="small" id="hint" style="margin-top:10px;"></div>
-        <div style="margin-top:12px; display:none" id="thumbWrap">
-          <img id="thumb" style="max-width:100%; border-radius:8px; border:1px solid #2a3247;" alt="preview"/>
-        </div>
-      </section>
-
-      <section class="panel stack">
-        <div class="rightHead">
-          <div>API response <span id="state" class="muted">Ready</span></div>
-          <div class="row" style="margin:0">
-            <button id="btnCopyTsv" disabled>Copy TSV</button>
-            <button id="btnCopyJson" disabled>Copy JSON</button>
-          </div>
-        </div>
-
-        <div>
-          <div class="small" style="margin-bottom:6px">TSV</div>
-          <pre id="tsvOut"></pre>
-        </div>
-
-        <div>
-          <div class="small" style="margin-bottom:6px">JSON</div>
-          <pre id="jsonOut"></pre>
-        </div>
-      </section>
+    <div>
+      <label for="week">Week:</label>
+      <input type="number" id="week" value="1" />
     </div>
-  </div>
+    <div>
+      <label for="versionSelect">Version:</label>
+      <select id="versionSelect">
+        <option value="0">Latest</option>
+      </select>
+    </div>
+    <div id="drop-zone">
+      Drag & drop a screenshot here
+      <input type="file" id="fileInput" />
+    </div>
+    <button id="uploadBtn">Upload & Parse</button>
+    <button id="clearBtn">Clear</button>
 
-  <script src="/ui.js"></script>
-</body>
+    <div id="response">
+      <h2>API response</h2>
+      <div>
+        <button id="copyTsv">Copy TSV</button>
+        <button id="copyJson">Copy JSON</button>
+      </div>
+      <pre id="tsvOutput"></pre>
+      <pre id="jsonOutput"></pre>
+    </div>
+
+    <script src="/ui.js"></script>
+  </body>
 </html>

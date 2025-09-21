@@ -12,56 +12,45 @@
       --round: 12px;
     }
     * { box-sizing:border-box; }
-    body {
-      margin:0; background:var(--bg); color:var(--text);
-      font: 15px/1.5 system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, Noto Sans, "Apple Color Emoji", "Segoe UI Emoji";
+    body { margin:0; background:var(--bg); color:var(--text);
+      font:15px/1.5 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,Noto Sans,"Apple Color Emoji","Segoe UI Emoji";
     }
     h1 { margin:18px 20px; font-size:28px; font-weight:800; letter-spacing:.3px; }
-    .grid {
-      display:grid; grid-template-columns: 1.1fr 1.4fr; gap:16px; padding:0 16px 20px;
-    }
-    .panel {
-      background:var(--panel); border:1px solid var(--border); border-radius:var(--round);
-      padding:16px; min-height:120px;
-    }
+    .grid { display:grid; grid-template-columns: 1.08fr 1.42fr; gap:16px; padding:0 16px 20px; }
+    .panel { background:var(--panel); border:1px solid var(--border); border-radius:var(--round); padding:16px; min-height:120px; }
     label { color:var(--muted); font-size:13px; margin-right:8px; }
-    input[type="number"], input[type="text"] {
-      background:var(--soft); color:var(--text); border:1px solid var(--border); border-radius:8px;
-      padding:8px 10px; width:120px;
-    }
+    input[type="number"]{ background:var(--soft); color:var(--text); border:1px solid var(--border); border-radius:8px; padding:8px 10px; width:120px; }
     .row { display:flex; align-items:center; gap:12px; margin-bottom:12px; }
-    .drop {
-      border:2px dashed var(--border); border-radius:var(--round); height:300px;
+    .drop { border:2px dashed var(--border); border-radius:var(--round); height:300px;
       display:grid; place-items:center; text-align:center; color:var(--muted);
-      background: repeating-linear-gradient(135deg, transparent 0 8px, rgba(255,255,255,.015) 8px 16px);
-      cursor:pointer;
+      background:repeating-linear-gradient(135deg,transparent 0 8px,rgba(255,255,255,.015) 8px 16px); cursor:pointer;
     }
     .actions { display:flex; gap:10px; margin-top:12px; }
-    button {
-      background:#1f2733; color:var(--text); border:1px solid var(--border); padding:8px 12px;
-      border-radius:10px; cursor:pointer;
-    }
+    button { background:#1f2733; color:var(--text); border:1px solid var(--border); padding:8px 12px; border-radius:10px; cursor:pointer; }
     button:disabled{ opacity:.5; cursor:not-allowed; }
     .muted{ color:var(--muted); }
     .mono{ font-family:var(--mono); font-size:13px; }
-    pre {
-      background:var(--soft); border:1px solid var(--border); border-radius:var(--round);
-      padding:12px; white-space:pre; overflow:auto; min-height:120px;
-    }
-    .two { display:grid; grid-template-rows: auto auto 1fr 1fr; gap:12px; }
+    pre { background:var(--soft); border:1px solid var(--border); border-radius:var(--round); padding:12px; white-space:pre; overflow:auto; min-height:120px; }
+    .two { display:grid; grid-template-rows: auto auto auto 1fr 1fr; gap:12px; }
     #thumbWrap{ display:none; margin-top:10px; }
     #thumb{ max-width:220px; border-radius:10px; border:1px solid var(--border); }
 
-    /* TABLE */
-    #tableWrap {
-      background:var(--soft); border:1px solid var(--border); border-radius:var(--round);
-      padding:10px; overflow:auto;
-    }
-    table { border-collapse:collapse; width:100%; min-width:520px; }
+    /* Small table helpers */
+    .table-box { background:var(--soft); border:1px solid var(--border); border-radius:var(--round); padding:10px; overflow:auto; }
+    table { border-collapse:collapse; width:100%; }
     th, td { padding:8px 10px; border-bottom:1px solid var(--border); text-align:left; }
     th { color:var(--muted); font-weight:600; }
     td.score { font-family:var(--mono); }
     td.winner { font-weight:700; color:var(--good); }
+
+    /* League grid (four big tables) */
+    .league-grid {
+      display:grid; grid-template-columns: 1fr 1fr; gap:16px; padding:0 16px 24px;
+    }
+    .tight th, .tight td { padding:6px 8px; }
+    .center { text-align:center; }
+    .right { text-align:right; }
+    .dim { color:var(--muted); }
   </style>
 </head>
 <body>
@@ -92,30 +81,29 @@
       <div id="thumbWrap"><img id="thumb" alt="preview" /></div>
     </section>
 
-    <!-- RIGHT: outputs -->
+    <!-- RIGHT: current week outputs + history -->
     <section class="panel two">
-      <!-- TABLE -->
+      <!-- Current-week Match Table -->
       <div>
         <div class="muted" style="margin-bottom:6px">Table</div>
-        <div id="tableWrap"><table id="matchTable"></table></div>
+        <div id="tableWrap" class="table-box"><table id="matchTable"></table></div>
       </div>
-      <!-- place inside the right column, above TSV or where you want -->
+
+      <!-- Weeks summary (saves/loads) -->
       <div>
         <div class="muted" style="margin-bottom:6px">Weeks</div>
-        <div id="weeksWrap" class="mono" style="background:var(--soft);border:1px solid var(--border);border-radius:var(--round);padding:10px;overflow:auto">
-          <table id="weeksTable" style="width:100%;min-width:560px;border-collapse:collapse">
+        <div id="weeksWrap" class="table-box mono">
+          <table id="weeksTable" style="width:100%;min-width:560px">
             <thead>
               <tr>
-                <th style="text-align:left;padding:6px 8px;color:var(--muted)">Week</th>
-                <th style="text-align:left;padding:6px 8px;color:var(--muted)">Status</th>
-                <th style="text-align:left;padding:6px 8px;color:var(--muted)">Saved</th>
-                <th style="text-align:left;padding:6px 8px;color:var(--muted)">Action</th>
+                <th>week</th><th>Status</th><th>Saved</th><th>Action</th>
               </tr>
             </thead>
             <tbody></tbody>
           </table>
         </div>
       </div>
+
       <!-- TSV -->
       <div>
         <div class="muted" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
@@ -132,6 +120,37 @@
           <button id="btnCopyJson" disabled>Copy JSON</button>
         </div>
         <pre id="jsonOut" class="mono"></pre>
+      </div>
+    </section>
+  </div>
+
+  <!-- LEAGUE TABLES (the 4 you asked for) -->
+  <div class="league-grid">
+    <section class="panel">
+      <div class="muted" style="margin-bottom:6px">W-L by week</div>
+      <div class="table-box">
+        <table id="wlTable" class="tight"></table>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="muted" style="margin-bottom:6px">Wavy Points by week</div>
+      <div class="table-box">
+        <table id="wavyTable" class="tight"></table>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="muted" style="margin-bottom:6px">Points For by week</div>
+      <div class="table-box">
+        <table id="pfTable" class="tight"></table>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="muted" style="margin-bottom:6px">Summary (Hybrid)</div>
+      <div class="table-box">
+        <table id="summaryTable" class="tight"></table>
       </div>
     </section>
   </div>

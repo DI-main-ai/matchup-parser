@@ -30,12 +30,6 @@
     button:disabled{ opacity:.5; cursor:not-allowed; }
     .muted{ color:var(--muted); }
     .mono{ font-family:var(--mono); font-size:13px; }
-    pre { background:var(--soft); border:1px solid var(--border); border-radius:var(--round); padding:12px; white-space:pre; overflow:auto; min-height:120px; }
-    .two { display:grid; grid-template-rows: auto auto auto 1fr 1fr; gap:12px; }
-    #thumbWrap{ display:none; margin-top:10px; }
-    #thumb{ max-width:220px; border-radius:10px; border:1px solid var(--border); }
-
-    /* Small table helpers */
     .table-box { background:var(--soft); border:1px solid var(--border); border-radius:var(--round); padding:10px; overflow:auto; }
     table { border-collapse:collapse; width:100%; }
     th, td { padding:8px 10px; border-bottom:1px solid var(--border); text-align:left; }
@@ -43,7 +37,10 @@
     td.score { font-family:var(--mono); }
     td.winner { font-weight:700; color:var(--good); }
 
-    /* League grid (four big tables) */
+    /* right column layout */
+    .two { display:grid; grid-template-rows: auto auto 1fr; gap:12px; }
+
+    /* league grid (four big tables) */
     .league-grid {
       display:grid; grid-template-columns: 1fr 1fr; gap:16px; padding:0 16px 24px;
     }
@@ -51,6 +48,9 @@
     .center { text-align:center; }
     .right { text-align:right; }
     .dim { color:var(--muted); }
+
+    #thumbWrap{ display:none; margin-top:10px; }
+    #thumb{ max-width:220px; border-radius:10px; border:1px solid var(--border); }
   </style>
 </head>
 <body>
@@ -85,7 +85,7 @@
     <section class="panel two">
       <!-- Current-week Match Table -->
       <div>
-        <div class="muted" style="margin-bottom:6px">Table</div>
+        <div class="muted" style="margin-bottom:6px">Current Week</div>
         <div id="tableWrap" class="table-box"><table id="matchTable"></table></div>
       </div>
 
@@ -104,27 +104,11 @@
         </div>
       </div>
 
-      <!-- TSV -->
-      <div>
-        <div class="muted" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
-          <span>TSV</span>
-          <button id="btnCopyTsv" disabled>Copy TSV</button>
-        </div>
-        <pre id="tsvOut" class="mono"></pre>
-      </div>
-
-      <!-- JSON -->
-      <div>
-        <div class="muted" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
-          <span>JSON</span>
-          <button id="btnCopyJson" disabled>Copy JSON</button>
-        </div>
-        <pre id="jsonOut" class="mono"></pre>
-      </div>
+      <!-- (No TSV/JSON blocks anymore) -->
     </section>
   </div>
 
-  <!-- LEAGUE TABLES (the 4 you asked for) -->
+  <!-- LEAGUE TABLES (the 4 views) -->
   <div class="league-grid">
     <section class="panel">
       <div class="muted" style="margin-bottom:6px">W-L by week</div>

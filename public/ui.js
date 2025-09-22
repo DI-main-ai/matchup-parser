@@ -345,34 +345,38 @@
 
   function renderSummaryTable(tbl, teams, wlTotals, wavyTotals, pfTotals) {
     if (!tbl) return;
-
-    // Yahoo rank = Wins (desc), tiebreak Points For (desc)
+  
+    // Yahoo rank: wins desc, tiebreak PF desc
     const yahooSorted = [...teams].sort((a,b) => {
       const dw = (wlTotals.get(b)||0) - (wlTotals.get(a)||0);
       if (dw) return dw;
       return (pfTotals.get(b)||0) - (pfTotals.get(a)||0);
     });
     const yahooRank = new Map(yahooSorted.map((t,i)=>[t, i+1]));
-
-    // Wavy rank = Wavy totals (desc)
-    const wavySorted = [...teams].sort((a,b) => (wavyTotals.get(b)||0) - (wavyTotals.get(a)||0));
+  
+    // Wavy rank: wavy points desc, tiebreak PF desc (this fixes oklama vs SS)
+    const wavySorted = [...teams].sort((a,b) => {
+      const dp = (wavyTotals.get(b)||0) - (wavyTotals.get(a)||0);
+      if (dp) return dp;
+      return (pfTotals.get(b)||0) - (pfTotals.get(a)||0);
+    });
     const wavyRank = new Map(wavySorted.map((t,i)=>[t, i+1]));
-
-    // Hybrid = average of ranks
+  
+    // Hybrid = average of the two ranks
     const hybrid = new Map(
       teams.map(t => [
         t,
-        ((yahooRank.get(t) || 0) + (wavyRank.get(t) || 0)) / 2,
+        ((yahooRank.get(t) || 0) + (wavyRank.get(t) || 0)) / 2
       ])
     );
-
-    // Sort by hybrid (asc). Tie-break by Points For (desc).
+  
+    // Sort by Hybrid asc; tiebreak by Points For desc
     const order = [...teams].sort((a, b) => {
       const diff = hybrid.get(a) - hybrid.get(b);
       if (Math.abs(diff) > 1e-9) return diff;
       return (pfTotals.get(b) || 0) - (pfTotals.get(a) || 0);
     });
-
+  
     tbl.innerHTML = `
       <thead>
         <tr>
@@ -387,8 +391,9 @@
       <tbody></tbody>
     `;
     const tbody = tbl.querySelector('tbody');
-    const ordinal = (n) => n + (['th','st','nd','rd'][(n%100>>3^1&&n%10)||0]||'th');
-
+  
+    function ordinal(n){ return n + (['th','st','nd','rd'][(n%100>>3^1&&n%10)||0]||'th'); }
+  
     order.forEach((t,idx) => {
       const tr = document.createElement('tr');
       tr.innerHTML = `
@@ -404,6 +409,7 @@
     });
   }
 
+
   function renderLeagueTables(allItems) {
     const teams = collectTeams(allItems);
     const perWeek = computePerWeek(allItems, teams);
@@ -415,9 +421,10 @@
     const wlByWeek = {};
     for (let w=1; w<=18; w++) wlByWeek[w] = WL.byWeek[w];
 
-    renderMatrixTable(els.wlTable, 'W-L', teams, wlByWeek, (v)=>v||'');
-    renderMatrixTable(els.wavyTable, 'Wavy', teams, wavy.byWeek, (v)=>v?toFixed(v):'');
-    renderMatrixTable(els.pfTable, 'PointsFor', teams, pf.byWeek, (v)=>v?toFixed(v):'');
+    // W-L table: count “W” per team
+    renderMatrixTable(els.wlTable, 'W-L', teams, wlByWeek, (v)=>v||'', 'countWins');
+    renderMatrixTable(els.wavyTable, 'Wavy', teams, wavy.byWeek, (v)=>v?toFixed(v):'', 'sumNumbers');
+    renderMatrixTable(els.pfTable, 'PointsFor', teams, pf.byWeek, (v)=>v?toFixed(v):'', 'sumNumbers');
 
     // summary
     renderSummaryTable(els.summaryTable, teams, WL.totals, wavy.totals, pf.totals);

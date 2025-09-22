@@ -302,9 +302,10 @@
     return { byWeek, totals };
   }
 
-  function renderMatrixTable(tbl, _title, teams, dataByWeek, formatter = (x)=>x) {
+  function renderMatrixTable(tbl, titleRow, teams, dataByWeek, formatter = (x)=>x, totalMode = 'sumNumbers') {
     if (!tbl) return;
     const weeks = [...Array(18)].map((_,i)=>i+1);
+  
     tbl.innerHTML = `
       <thead>
         <tr>
@@ -316,26 +317,31 @@
       <tbody></tbody>
     `;
     const tbody = tbl.querySelector('tbody');
-
-    // totals for left column
-    const totals = new Map(teams.map(t => [t, 0]));
+  
     teams.forEach(t => {
+      // compute total for the row
+      let total = 0;
       weeks.forEach(w => {
-        const v = dataByWeek[w]?.[t] ?? 0;
-        if (typeof v === 'number') totals.set(t, totals.get(t)+v);
+        const v = dataByWeek[w]?.[t];
+        if (totalMode === 'countWins') {
+          if (v === 'W') total += 1;
+        } else {
+          if (typeof v === 'number') total += v;
+        }
       });
-    });
-
-    teams.forEach(t => {
+  
+      const totalText = (totalMode === 'countWins') ? String(total) : toFixed(total);
+  
       const tr = document.createElement('tr');
       tr.innerHTML = `
         <td>${t}</td>
-        <td class="right mono">${typeof totals.get(t)==='number' ? toFixed(totals.get(t)) : totals.get(t)}</td>
+        <td class="right mono">${totalText}</td>
         ${weeks.map(w => `<td class="center mono">${formatter(dataByWeek[w]?.[t] ?? '')}</td>`).join('')}
       `;
       tbody.appendChild(tr);
     });
   }
+
 
   function renderSummaryTable(tbl, teams, wlTotals, wavyTotals, pfTotals) {
     if (!tbl) return;

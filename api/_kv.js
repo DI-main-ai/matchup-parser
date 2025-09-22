@@ -1,47 +1,34 @@
-// Lightweight Upstash REST helper
-const { KV_REST_API_URL, KV_REST_API_TOKEN } = process.env;
+// /api/_kv.js
+import { Redis } from '@upstash/redis';
 
-if (!KV_REST_API_URL || !KV_REST_API_TOKEN) {
-  console.warn('⚠️ Missing KV_REST_API_URL or KV_REST_API_TOKEN env vars');
+const url   = process.env.UPSTASH_REDIS_REST_URL;
+const token = process.env.UPSTASH_REDIS_REST_TOKEN;
+
+if (!url || !token) {
+  // Fail loudly so we don't get confusing WRONGPASS errors
+  throw new Error('Missing UPSTASH_REDIS_REST_URL or UPSTASH_REDIS_REST_TOKEN');
 }
 
-async function kvFetch(path, opts = {}) {
-  const res = await fetch(`${KV_REST_API_URL}${path}`, {
-    ...opts,
-    headers: {
-      Authorization: `Bearer ${KV_REST_API_TOKEN}`,
-      'Content-Type': 'application/json',
-      ...(opts.headers || {}),
-    },
-    cache: 'no-store',
-  });
-  if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    throw new Error(`KV error ${res.status}: ${text || res.statusText}`);
-  }
-  return res.json();
-}
+export const kv = new Redis({ url, token });
 
-// Store JSON under a key
+// Helpers we used elsewhere
 export async function kvSetJSON(key, value) {
-  return kvFetch('/set', {
-    method: 'POST',
-    body: JSON.stringify({ key, value: JSON.stringify(value) }),
-  });
+  // Upstash stores JSON fine; no need to stringify manually.
+  // If you prefer strings: await kv.set(key, JSON.stringify(value))
+  return kv.set(key, value);
 }
 
-// Get JSON from a key
 export async function kvGetJSON(key) {
-  const out = await kvFetch(`/get/${encodeURIComponent(key)}`);
-  if (!out || out.result == null) return null;
-  try { return JSON.parse(out.result); } catch { return out.result; }
+  const v = await kv.get(key);
+  return v ?? null;
 }
 
-// List keys by prefix
+export async function kvDel(key) {
+  return kv.del(key);
+}
+
 export async function kvKeys(prefix) {
-  const out = await kvFetch('/keys', {
-    method: 'POST',
-    body: JSON.stringify({ match: `${prefix}*`, count: 1000 }),
-  });
-  return out.result || [];
+  // Use KEYS for small keyspaces; for very large, switch to SCAN.
+  // Upstash exposes "keys" safely for small usage.
+  return kv.keys(`${prefix}*`);
 }

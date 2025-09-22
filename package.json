@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "dependencies": {
+    "@upstash/redis": "^1.31.6",
     "busboy": "^1.6.0",
     "multiparty": "^4.2.3",
     "openai": "^4.58.0"
